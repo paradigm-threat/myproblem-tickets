@@ -24,7 +24,9 @@ kubectl apply -f infra/k8s/intake-bringup.yaml
 kubectl -n myproblem rollout restart deployment/intake
 ```
 
-Secrets: `TICKETS_API_SECRET`, `OPS_WAKE_SECRET` (optional `GROQ_API_KEY`).
+**Persistence:** tip git lives on hostPath `/var/lib/myproblem-intake/regions` (survives Recreate). Cache stays `emptyDir`. ConfigMap must include `ticketAuth.mjs`.
+
+Secrets: `TICKETS_API_SECRET`, `OPS_WAKE_SECRET`, `REQUIRE_TICKET_CLAIM` (optional `GROQ_API_KEY`).
 
 ## Retention
 

@@ -20,6 +20,9 @@ spec:
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      # Same node as Caddy hostPorts — tip git must stay on this host.
+      nodeSelector:
+        kubernetes.io/hostname: prod-instance-17941481574532202
       containers:
         - name: intake
           image: node:22-bookworm-slim
@@ -36,6 +39,7 @@ spec:
               cp /code/wake-batch.mjs /app/workers/intake/wake-batch.mjs
               cp /code/gitTipStore.mjs /app/workers/lib/gitTipStore.mjs
               cp /code/piiConvert.mjs /app/workers/lib/piiConvert.mjs
+              cp /code/ticketAuth.mjs /app/workers/lib/ticketAuth.mjs
               mkdir -p /data/regions /data/cache
               exec node workers/intake/server.mjs
           ports:
@@ -73,8 +77,10 @@ spec:
           volumeMounts:
             - name: code
               mountPath: /code
-            - name: data
-              mountPath: /data
+            - name: regions
+              mountPath: /data/regions
+            - name: cache
+              mountPath: /data/cache
           readinessProbe:
             httpGet:
               path: /health
@@ -98,7 +104,13 @@ spec:
         - name: code
           configMap:
             name: intake-code
-        - name: data
+        # Survive Recreate; emptyDir wiped tips on every rollout.
+        - name: regions
+          hostPath:
+            path: /var/lib/myproblem-intake/regions
+            type: DirectoryOrCreate
+        # Ephemeral media cache — OK to lose on pod recreate.
+        - name: cache
           emptyDir: {}
 ---
 apiVersion: v1

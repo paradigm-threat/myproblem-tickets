@@ -24,6 +24,7 @@ import {
   trimHistory,
 } from "../lib/gitTipStore.mjs";
 import { scrubTipPii, convertPii } from "../lib/piiConvert.mjs";
+import { authorizeTicket } from "../lib/ticketAuth.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "../..");
@@ -81,9 +82,16 @@ function hasOpsSecret(req) {
   return Boolean(hdr && safeEqual(String(hdr), secret));
 }
 
-/** UUID capability: knowing the id is enough. Ops secret always ok. */
-function authorize(_req, tip) {
-  if (!tip) return false;
+/** UUID = access; when REQUIRE_TICKET_CLAIM=1, claim is required (API secret bypasses). */
+function authorize(req, tip) {
+  return authorizeTicket(req, tip, { hasApiSecret: hasApiSecret(req) });
+}
+
+function denyUnlessAuthorized(req, res, tip) {
+  if (!authorize(req, tip)) {
+    json(res, 401, { error: "unauthorized" });
+    return false;
+  }
   return true;
 }
 
@@ -140,6 +148,7 @@ const server = createServer(async (req, res) => {
     const tip = createTicket(region);
     return json(res, 200, {
       ticket_uuid: tip.ticket_uuid,
+      claim: tip.claim,
       region,
       tip,
     });
@@ -151,7 +160,7 @@ const server = createServer(async (req, res) => {
     const found = loadTipAnyRegion(id);
     if (!found) return json(res, 404, { error: "not_found" });
     const { tip, region } = found;
-    if (!authorize(req, tip)) return json(res, 401, { error: "unauthorized" });
+    if (!denyUnlessAuthorized(req, res, tip)) return;
 
     if (req.method === "GET") {
       // Honest intake from job files
@@ -215,6 +224,7 @@ const server = createServer(async (req, res) => {
     const id = preserveMatch[1];
     const found = loadTipAnyRegion(id);
     if (!found) return json(res, 404, { error: "not_found" });
+    if (!denyUnlessAuthorized(req, res, found.tip)) return;
     const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     const tip = setPreserve(found.region, id, body.preserve !== false);
     return json(res, 200, tip);
@@ -225,6 +235,7 @@ const server = createServer(async (req, res) => {
     const id = reprocessMatch[1];
     const found = loadTipAnyRegion(id);
     if (!found) return json(res, 404, { error: "not_found" });
+    if (!denyUnlessAuthorized(req, res, found.tip)) return;
     let { tip, region } = found;
     const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     const delta = body.contextDelta || {};
@@ -284,6 +295,7 @@ const server = createServer(async (req, res) => {
     const id = closeMatch[1];
     const found = loadTipAnyRegion(id);
     if (!found) return json(res, 404, { error: "not_found" });
+    if (!denyUnlessAuthorized(req, res, found.tip)) return;
     // Purge linked cache media when deleting
     if (!found.tip.preserve) {
       for (const ev of found.tip.evidence || []) {
@@ -299,6 +311,7 @@ const server = createServer(async (req, res) => {
     const id = evMatch[1];
     const found = loadTipAnyRegion(id);
     if (!found) return json(res, 404, { error: "not_found" });
+    if (!denyUnlessAuthorized(req, res, found.tip)) return;
     let { tip, region } = found;
     const ct = req.headers["content-type"] || "";
     const raw = await readBody(req);

@@ -15,6 +15,7 @@ import {
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { issueClaim } from "./ticketAuth.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "../..");
@@ -69,7 +70,7 @@ export function emptyTip(id, region) {
     schema: "myproblem.ticket.tip.v1",
     ticket_uuid: id,
     region,
-    claim: null,
+    claim: issueClaim(),
     preserve: false,
     createdAtMs: now,
     updatedAtMs: now,

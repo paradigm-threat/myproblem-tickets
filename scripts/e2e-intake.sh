@@ -20,11 +20,11 @@ curl -fsS "$BASE/health" | tee /tmp/intake-health.json
 echo
 
 echo "== create ticket =="
-CREATE=$(curl -fsS "${HDR[@]}" -X POST "$BASE/api/tickets")
+CREATE=$(curl -fsS "${HDR[@]}" -X POST "$BASE/api/tickets" -d '{"region":"georgia","source":"e2e"}')
 echo "$CREATE" | tee /tmp/intake-create.json
 UUID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/intake-create.json','utf8')).ticket_uuid)")
-CLAIM=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/intake-create.json','utf8')).claim)")
-echo "uuid=$UUID"
+CLAIM=$(node -e "const j=JSON.parse(require('fs').readFileSync('/tmp/intake-create.json','utf8')); if(!j.claim) process.exit(2); console.log(j.claim)")
+echo "uuid=$UUID claim_len=${#CLAIM}"
 
 echo "== get with claim =="
 curl -fsS -H "authorization: Bearer $CLAIM" "$BASE/api/tickets/$UUID" | tee /tmp/intake-get.json >/dev/null
@@ -44,5 +44,8 @@ echo
 echo "== unauthorized without claim (expect 401 if REQUIRE_TICKET_CLAIM=1) =="
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/tickets/$UUID" || true)
 echo "status=$CODE"
+if [[ "${REQUIRE_TICKET_CLAIM:-}" == "1" || "${REQUIRE_TICKET_CLAIM:-}" == "true" ]]; then
+  [[ "$CODE" == "401" ]] || { echo "expected 401 without claim"; exit 1; }
+fi
 
 echo "E2E done."

@@ -13,10 +13,12 @@ describe("gitTipStore", () => {
   it("creates tip in georgia with preserve false", () => {
     const tip = createTicket("georgia");
     assert.ok(tip.ticket_uuid);
+    assert.ok(tip.claim && tip.claim.length >= 32);
     assert.equal(tip.preserve, false);
     assert.equal(tip.region, "georgia");
     const loaded = loadTip("georgia", tip.ticket_uuid);
     assert.equal(loaded.ticket_uuid, tip.ticket_uuid);
+    assert.equal(loaded.claim, tip.claim);
   });
 
   it("purge-on-close unless preserve", () => {
