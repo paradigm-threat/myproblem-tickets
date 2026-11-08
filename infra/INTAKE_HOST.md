@@ -3,14 +3,13 @@
 | Field | Value |
 |-------|--------|
 | Cloudspace | `myproblem-intake` |
-| Org | paradigmthreat (`org_wb51srHT8GccEYeV`) |
+| Org | paradigmthreat |
 | Region | `us-east-iad-1` |
-| K8s | `1.33.0` |
-| Server class | `gp.vs1.large-iad` (4 vCPU / 16 GB) |
-| Spot pool UUID | `83d657d7-e491-4b89-b5c1-ef6cf6935399` |
-| Bid | `$0.01`/hr (market often lower) |
-| Labels | `relay.ai.intake=on` |
+| Public ticket host | `https://intake.myproblem.app` (DNS A → Spot; Caddy LE → `:8787`) |
+| SoT | Regional git (`regions/georgia`, `regions/israel`) — **no Neon** |
+| Gateway | `relay-gateway` renders tip.json / index.md by UUID path (pending full mount) |
+| Commit worker | `workers/intake/server.mjs` (`infra/k8s/intake-bringup.yaml`) |
+| TLS | `infra/k8s/intake-caddy.yaml` — certs at hostPath `/var/lib/myproblem-caddy` |
+| Batch | Ephemeral `myproblem-batch` / A30 — wake when job files queued |
 
-Created via Rackspace Spot MCP. Deploy Intake API container/process next; point Vercel `INTAKE_URL` at it when ready.
-
-**Batch** (`myproblem-batch` / A30) is **not** left running — Intake wakes it via `spot-wake-batch.sh` / Spot API when Neon bins are ready, then Batch self-decommissions.
+**Privacy:** UUID capability; no list APIs; close purges unless `preserve`; history trim ~48h; PII converted before commit.

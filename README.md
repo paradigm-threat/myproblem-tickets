@@ -1,33 +1,51 @@
 # myproblem-tickets
 
-Server-managed ticket dossier (Relay catalog SoT). Media bytes live in object store; this repo holds tip JSON only.
+Regional Relay app git SoT for MyProblem tips. **No Neon.** Text + media links only.
+
+## Regional repos
+
+| Path | Forge name |
+|------|------------|
+| [`regions/georgia`](regions/georgia) | `myproblem-tickets-georgia` |
+| [`regions/israel`](regions/israel) | `myproblem-tickets-israel` |
+
+Each is a Relay app (`.relay.yaml` + CleverScript hooks). **UUID = access** — no ticket listing.
 
 ## Hosts
 
-| Host | Cloudspace | Role |
-|------|------------|------|
-| **Intake** | `myproblem-intake` (IAD CPU) | Ticket API, light Groq LLM, Neon bins, wake Batch |
-| **Batch** | `myproblem-batch` (SJC A30) | Whisper + VL/Project; self-deletes when empty |
+| Host | Role |
+|------|------|
+| **Intake** (`myproblem-intake`) | `relay-gateway` renders tip JSON/md; commit worker mutates via git |
+| **Batch** (`myproblem-batch`) | Whisper/VL; lease/done = commits in the same regional repo |
 
-See [docs in myproblem](../myproblem/docs/intake-batch-infra.md).
+Vercel hosts marketing + APK only.
 
-## Layout
+## Layout (per region)
 
 ```
-schema/tip.v1.json       Tip JSON Schema
-tickets/<uuid>/tip.json  Live tips (local/dev; fleet uses Relay tip publish)
-workers/intake/           Always-on process stubs
-workers/batch/           Ephemeral GPU drain + self-decommission
-infra/scripts/           Spot wake / destroy helpers
+.relay.yaml
+hooks/server/get.cs          # exact UUID paths only
+hooks/server/pre-commit.cs   # reject binaries under tickets/
+tickets/<uuid>/tip.json      # preserve, intake, evidence links
+tickets/<uuid>/index.md
+tickets/<uuid>/jobs/<id>.json
 ```
 
-## Local tip write
+## Privacy
+
+- Close without `preserve` → purge tip tree
+- Mesh history trim ~48h (`POST /api/ops/trim-history`)
+- PII auto-conversion before commit — see myproblem `docs/pii-and-privacy.md`
+
+## Local
 
 ```bash
-node workers/intake/write-tip.mjs --id demo --title "Flat tire"
+npm run intake:serve    # commit worker :8787
+npm run wake:check
+npm run test:wake
+node --test workers/lib/gitTipStore.test.mjs
 ```
 
-## Catalog
+## Deploy
 
-Draft record: `../relay/relay-master/catalog/repos/myproblem-tickets.json`  
-Register submodule after first push to forge (`add-catalog-submodule.sh`).
+See [`infra/DEPLOY.md`](infra/DEPLOY.md) · [`infra/INTAKE_HOST.md`](infra/INTAKE_HOST.md)

@@ -3,11 +3,13 @@
   "$id": "https://myproblem.app/schema/tip.v1.json",
   "title": "MyProblemTicketTip",
   "type": "object",
-  "required": ["schema", "ticket_uuid", "createdAtMs", "updatedAtMs", "status", "fields", "intake", "timeline"],
+  "required": ["schema", "ticket_uuid", "createdAtMs", "updatedAtMs", "status", "fields", "intake", "timeline", "preserve"],
   "properties": {
     "schema": { "const": "myproblem.ticket.tip.v1" },
     "ticket_uuid": { "type": "string", "format": "uuid" },
+    "region": { "enum": ["georgia", "israel"] },
     "claim": { "type": ["string", "null"] },
+    "preserve": { "type": "boolean", "description": "If true, close keeps tip; else close purges from git" },
     "createdAtMs": { "type": "integer" },
     "updatedAtMs": { "type": "integer" },
     "status": { "enum": ["open", "closed"] },
@@ -40,13 +42,15 @@
       "enum": [
         "draft",
         "listening",
+        "queued",
         "transcribing",
         "figuring_out",
         "named_and_questions",
         "advice_ready",
         "queue_project",
         "needs_user_text",
-        "investigating"
+        "investigating",
+        "timeout"
       ]
     },
     "questions": { "type": "array", "items": { "type": "string" } },
@@ -58,11 +62,13 @@
         "properties": {
           "id": { "type": "string" },
           "kind": { "enum": ["audio", "still", "transcript", "text"] },
-          "uri": { "type": "string" },
+          "uri": { "type": "string", "description": "Link only — no binary in git" },
           "sha256": { "type": "string" },
           "chunkIndex": { "type": ["integer", "null"] },
           "isFinal": { "type": ["boolean", "null"] },
-          "atMs": { "type": "integer" }
+          "atMs": { "type": "integer" },
+          "text": { "type": "string" },
+          "processed": { "type": "boolean" }
         }
       }
     },

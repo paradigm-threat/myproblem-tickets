@@ -1,19 +1,13 @@
-#!/usr/bin/env node
 /**
- * Intake wake loop stub: if Neon GPU bins are ready, print Spot create steps.
- * Production: call Rackspace Spot API (createCloudspace / createSpotNodePool).
+ * Intake wake loop: if regional git job files are queued, wake Batch Spot.
+ * No Neon / DATABASE_URL.
  *
  * Env:
- *   DATABASE_URL — Neon
  *   SPOT_TOKEN — Rackspace Spot API token (never commit)
  *   WAKE_ASR_MIN — default 1
  *   WAKE_MAX_AGE_HOURS — default 24
  */
-import { readFileSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { countQueuedByBin } from "../lib/gitTipStore.mjs";
 
 function loadThresholds() {
   return {
@@ -29,57 +23,37 @@ export function shouldWakeBatch(counts, oldestAgeHours, thr = loadThresholds()) 
   if (counts.asr >= thr.asrMin || counts.vision >= thr.visionMin || counts.project >= thr.projectMin) {
     return { wake: true, reason: "depth" };
   }
-  if (oldestAgeHours != null && oldestAgeHours >= thr.maxAgeHours && (counts.asr + counts.vision + counts.project) > 0) {
+  if (
+    oldestAgeHours != null &&
+    oldestAgeHours >= thr.maxAgeHours &&
+    counts.asr + counts.vision + counts.project > 0
+  ) {
     return { wake: true, reason: "age" };
   }
   return { wake: false, reason: "quiet" };
 }
 
-async function countQueuedFromEnv() {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    // Dev fallback: look for local marker file written by eval/enqueue
-    const marker = join(__dirname, "../../.wake-counts.json");
-    if (existsSync(marker)) return JSON.parse(readFileSync(marker, "utf8"));
-    return { asr: 0, vision: 0, project: 0, intake: 0, oldestAgeHours: 0 };
-  }
-  const { neon } = await import("@neondatabase/serverless");
-  const sql = neon(url);
-  const rows = await sql`
-    SELECT bin, COUNT(*)::int AS n,
-           EXTRACT(EPOCH FROM (NOW() - MIN(created_at))) / 3600.0 AS oldest_h
-    FROM ticket_jobs
-    WHERE state = 'queued' AND bin IN ('asr', 'vision', 'project', 'intake')
-    GROUP BY bin
-  `;
-  const counts = { asr: 0, vision: 0, project: 0, intake: 0 };
-  let oldestAgeHours = 0;
-  for (const r of rows) {
-    counts[r.bin] = r.n;
-    oldestAgeHours = Math.max(oldestAgeHours, Number(r.oldest_h) || 0);
-  }
-  return { ...counts, oldestAgeHours };
+export async function evaluateWake() {
+  const counts = countQueuedByBin();
+  const decision = shouldWakeBatch(counts, counts.oldestAgeHours);
+  return { ...decision, counts };
 }
 
 async function main() {
-  const counts = await countQueuedFromEnv();
-  const decision = shouldWakeBatch(counts, counts.oldestAgeHours);
-  console.log(JSON.stringify({ counts, decision }, null, 2));
-  if (!decision.wake) {
-    console.log("No wake.");
+  const result = await evaluateWake();
+  if (!result.wake) {
+    console.log("No wake.", result);
     return;
   }
-  if (!process.env.SPOT_TOKEN) {
-    console.log(
-      "Would wake myproblem-batch (SJC A30). Set SPOT_TOKEN and run infra/scripts/spot-wake-batch.sh",
-    );
-    return;
+  console.log("Would wake myproblem-batch:", result);
+  if (process.env.SPOT_TOKEN) {
+    console.log("SPOT_TOKEN set — invoke infra/scripts/spot-wake-batch.sh");
+  } else {
+    console.log("Set SPOT_TOKEN and run infra/scripts/spot-wake-batch.sh");
   }
-  console.log("SPOT_TOKEN set — invoke infra/scripts/spot-wake-batch.sh");
 }
 
-const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
-if (isMain) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((e) => {
     console.error(e);
     process.exit(1);

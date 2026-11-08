@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intake
+  namespace: myproblem
+  labels:
+    app: myproblem-intake
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # hostNetwork/hostPort — cannot RollingUpdate on one node
+  selector:
+    matchLabels:
+      app: myproblem-intake
+  template:
+    metadata:
+      labels:
+        app: myproblem-intake
+        relay.ai.intake: "on"
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: intake
+          image: node:22-bookworm-slim
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              apt-get update -qq && apt-get install -y -qq git >/dev/null
+              cp /code/package.json /app/package.json
+              mkdir -p /app/workers/intake /app/workers/lib
+              cp /code/server.mjs /app/workers/intake/server.mjs
+              cp /code/wake-batch.mjs /app/workers/intake/wake-batch.mjs
+              cp /code/gitTipStore.mjs /app/workers/lib/gitTipStore.mjs
+              cp /code/piiConvert.mjs /app/workers/lib/piiConvert.mjs
+              mkdir -p /data/regions /data/cache
+              exec node workers/intake/server.mjs
+          ports:
+            - containerPort: 8787
+              hostPort: 8787
+              name: http
+          env:
+            - name: PORT
+              value: "8787"
+            - name: TICKETS_CACHE_DIR
+              value: /data/cache
+            - name: TICKETS_REGIONS_ROOT
+              value: /data/regions
+            - name: TICKETS_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: intake-secrets
+                  key: TICKETS_API_SECRET
+            - name: OPS_WAKE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: intake-secrets
+                  key: OPS_WAKE_SECRET
+            - name: REQUIRE_TICKET_CLAIM
+              valueFrom:
+                secretKeyRef:
+                  name: intake-secrets
+                  key: REQUIRE_TICKET_CLAIM
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: intake-secrets
+                  key: GROQ_API_KEY
+                  optional: true
+          volumeMounts:
+            - name: code
+              mountPath: /code
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8787
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8787
+            initialDelaySeconds: 40
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+      volumes:
+        - name: code
+          configMap:
+            name: intake-code
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: intake
+  namespace: myproblem
+spec:
+  selector:
+    app: myproblem-intake
+  ports:
+    - port: 80
+      targetPort: 8787
+      name: http
+  type: ClusterIP

@@ -1,5 +1,6 @@
 node_modules/
 .eval/
+.data/
 .wake-counts.json
 infra/.last-*-pool-uuid
 .env
@@ -7,3 +8,10 @@ infra/.last-*-pool-uuid
 tickets/*/
 !tickets/.gitkeep
 *.pem
+
+# Regional tip worktrees (separate git SoT; not nested in this repo)
+
+# Regional tip worktrees are separate git SoTs (not nested in this repo)
+
+# Regional tip worktrees are separate git SoTs (not nested in this repo)
+/regions/

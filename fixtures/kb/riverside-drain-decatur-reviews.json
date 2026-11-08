@@ -1,0 +1,50 @@
+{
+  "business": {
+    "displayName": "Riverside Drain (fixture)",
+    "placeHook": "Decatur, Georgia",
+    "category": "plumbing",
+    "region": "georgia",
+    "slug": "riverside-drain-decatur",
+    "officialSite": "https://example.com/riverside-drain-fixture",
+    "note": "Synthetic public-style reviews for E2E only — not a real business scrape."
+  },
+  "retrievedAt": "2026-11-08T16:00:00Z",
+  "sourceKind": "fixture_public_comments",
+  "comments": [
+    {
+      "id": "c1",
+      "stars": 5,
+      "text": "Came out same day for a clogged main in Decatur. Price matched the quote. Cleaned up afterward.",
+      "when": "2026-09"
+    },
+    {
+      "id": "c2",
+      "stars": 4,
+      "text": "Fixed the water heater pilot. Communicated delays honestly. A bit pricey vs big box but showed license.",
+      "when": "2026-07"
+    },
+    {
+      "id": "c3",
+      "stars": 2,
+      "text": "Late by two hours without a text. Job was fine once they arrived. Would want better ETA next time.",
+      "when": "2026-05"
+    },
+    {
+      "id": "c4",
+      "stars": 5,
+      "text": "Explained the cleanout options without upselling a full repipe. Neighbor in Oakhurst recommended them.",
+      "when": "2026-03"
+    },
+    {
+      "id": "c5",
+      "stars": 1,
+      "text": "Invoice higher than verbal estimate. They did document the extra parts. Still frustrating.",
+      "when": "2025-12"
+    }
+  ],
+  "searchableFactsDoNotStore": {
+    "phone": "404-555-0142",
+    "hours": "Mon–Sat 8–6",
+    "reason": "Ordinary directory/search results — cite URL on ticket only."
+  }
+}

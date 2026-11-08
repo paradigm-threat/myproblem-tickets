@@ -1,15 +1,20 @@
 {
   "name": "myproblem-tickets",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "tip:write": "node workers/intake/write-tip.mjs",
     "wake:check": "node workers/intake/wake-batch.mjs",
+    "intake:serve": "node workers/intake/server.mjs",
     "batch:fixtures": "node workers/batch/drain-and-decommission.mjs fixtures",
-    "test:wake": "node --test workers/intake/wake-batch.test.mjs"
+    "test:wake": "node --test workers/intake/wake-batch.test.mjs",
+    "test:git": "node --test workers/lib/gitTipStore.test.mjs workers/lib/piiConvert.test.mjs",
+    "test:kb": "bash scripts/e2e-kb-research.sh",
+    "kb:research": "node workers/batch/research-kb-assessment.mjs",
+    "test": "npm run test:wake && npm run test:git && node --test workers/lib/kbStore.test.mjs workers/batch/research-kb-assessment.test.mjs",
+    "test:e2e": "bash scripts/e2e-intake.sh",
+    "docker:build": "docker build -t myproblem-intake:local ."
   },
-  "dependencies": {
-    "@neondatabase/serverless": "^1.2.0"
-  }
+  "dependencies": {}
 }
