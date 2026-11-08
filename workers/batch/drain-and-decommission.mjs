@@ -72,22 +72,33 @@ async function drainLocalFixtureEval() {
       continue;
     }
     let transcript;
-    try {
-      const r = await transcribeWithGroq(wav, apiKey);
-      transcript = r.text;
-    } catch (e) {
-      // Fallback: use script as perfect ASR for offline CI
+    let dryRun = false;
+    let fallbackScript = false;
+    let error;
+    if (!apiKey) {
+      // Offline CI: treat catalog script as perfect ASR stand-in
       transcript = s.script;
-      results.push({
-        id: s.id,
-        fallbackScript: true,
-        error: String(e.message || e),
-        score: scoreKeywords(transcript, s.expect),
-      });
-      continue;
+      dryRun = true;
+      fallbackScript = true;
+    } else {
+      try {
+        const r = await transcribeWithGroq(wav, apiKey);
+        transcript = r.text;
+      } catch (e) {
+        transcript = s.script;
+        fallbackScript = true;
+        error = String(e?.message || e);
+      }
     }
     const score = scoreKeywords(transcript, s.expect);
-    results.push({ id: s.id, transcript: transcript.slice(0, 200), score, dryRun: !apiKey });
+    results.push({
+      id: s.id,
+      transcript: transcript.slice(0, 200),
+      score,
+      dryRun,
+      fallbackScript,
+      error,
+    });
   }
   const outDir = join(ROOT, ".eval");
   mkdirSync(outDir, { recursive: true });

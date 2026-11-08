@@ -7,7 +7,7 @@ CLOUDSPACE="${BATCH_CLOUDSPACE:-myproblem-batch}"
 REGION="${BATCH_REGION:-us-west-sjc-1}"
 SERVER_CLASS="${BATCH_SERVER_CLASS:-gpu.vs2.xlargeplusplus-sjc}"
 BID="${BATCH_BID_PRICE:-0.15}"
-K8S_VERSION="${BATCH_K8S_VERSION:-1.33}"
+K8S_VERSION="${BATCH_K8S_VERSION:-1.33.0}"
 POOL_NAME="${BATCH_POOL_UUID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 
 echo "Wake plan:"

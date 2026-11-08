@@ -6,7 +6,7 @@ CLOUDSPACE="${INTAKE_CLOUDSPACE:-myproblem-intake}"
 REGION="${INTAKE_REGION:-us-east-iad-1}"
 SERVER_CLASS="${INTAKE_SERVER_CLASS:-gp.vs1.large-iad}"
 BID="${INTAKE_BID_PRICE:-0.01}"
-K8S_VERSION="${INTAKE_K8S_VERSION:-1.33}"
+K8S_VERSION="${INTAKE_K8S_VERSION:-1.33.0}"
 POOL_NAME="${INTAKE_POOL_UUID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 
 echo "Intake provision plan:"
