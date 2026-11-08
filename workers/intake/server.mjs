@@ -177,13 +177,25 @@ const server = createServer(async (req, res) => {
       const before = tip.intake;
       const now = Date.now();
       const started = tip.updatedAtMs || tip.createdAtMs || now;
+      const dryTxOnly =
+        !hasRealTx &&
+        tip.evidence.some(
+          (e) => e.kind === "transcript" && (e.model === "dry-run" || String(e.text || "").startsWith("[dry-run]")),
+        );
       if (hasRealTx && (tip.intake === "transcribing" || tip.intake === "queued" || tip.intake === "timeout")) {
         tip.intake = "named_and_questions";
       } else if (asrLeased) {
         tip.intake =
           now - started > 10 * 60 * 1000 ? "timeout" : "transcribing";
         tip.coachLine = tip.intake === "timeout" ? "Transcription stalled — retry." : "Transcribing…";
-      } else if (asrQueued || audioPending || tip.intake === "transcribing" || tip.intake === "queued") {
+      } else if (dryTxOnly) {
+        // Already processed without GROQ — do not pretend we are still queued.
+        tip.intake = "queued";
+        tip.coachLine =
+          tip.coachLine?.includes("GROQ") || tip.coachLine?.includes("dry-run")
+            ? tip.coachLine
+            : "ASR dry-run (set GROQ_API_KEY for Whisper) — waiting for real Batch…";
+      } else if (asrQueued || audioPending || tip.intake === "transcribing") {
         tip.intake = now - started > 30 * 60 * 1000 ? "timeout" : "queued";
         tip.coachLine =
           tip.intake === "timeout"
