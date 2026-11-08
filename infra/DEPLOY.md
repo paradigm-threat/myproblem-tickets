@@ -26,7 +26,7 @@ kubectl -n myproblem rollout restart deployment/intake
 
 **Persistence:** tip git lives on hostPath `/var/lib/myproblem-intake/regions` (survives Recreate). Cache stays `emptyDir`. ConfigMap must include `ticketAuth.mjs`.
 
-Secrets: `TICKETS_API_SECRET`, `OPS_WAKE_SECRET`, `REQUIRE_TICKET_CLAIM` (optional `GROQ_API_KEY`).
+Secrets: `TICKETS_API_SECRET`, `OPS_WAKE_SECRET`, `REQUIRE_TICKET_CLAIM`. Optional `GROQ_API_KEY` on the Intake secret enables Whisper via `POST /api/ops/process-jobs` (without it, ASR jobs dry-run and do **not** rename the ticket).
 
 ## Retention
 

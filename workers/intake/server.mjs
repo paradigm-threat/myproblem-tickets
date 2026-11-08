@@ -164,14 +164,20 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "GET") {
       // Honest intake from job files
-      const hasTx = tip.evidence.some((e) => e.kind === "transcript" && e.text);
+      const hasRealTx = tip.evidence.some(
+        (e) =>
+          e.kind === "transcript" &&
+          e.text &&
+          e.model !== "dry-run" &&
+          !String(e.text).startsWith("[dry-run]"),
+      );
       const asrQueued = tip.jobs.some((j) => j.bin === "asr" && j.state === "queued");
       const asrLeased = tip.jobs.some((j) => j.bin === "asr" && j.state === "leased");
       const audioPending = tip.evidence.some((e) => e.kind === "audio" && !e.processed && e.uri);
       const before = tip.intake;
       const now = Date.now();
       const started = tip.updatedAtMs || tip.createdAtMs || now;
-      if (hasTx && (tip.intake === "transcribing" || tip.intake === "queued" || tip.intake === "timeout")) {
+      if (hasRealTx && (tip.intake === "transcribing" || tip.intake === "queued" || tip.intake === "timeout")) {
         tip.intake = "named_and_questions";
       } else if (asrLeased) {
         tip.intake =
@@ -463,22 +469,25 @@ const server = createServer(async (req, res) => {
         audioEvidenceId: ev.id,
       });
       if (job.bin === "asr") {
-        if (!tip.fields.title.locked && text.length > 8) {
+        const realTx = model !== "dry-run" && !text.startsWith("[dry-run]");
+        if (realTx && !tip.fields.title.locked && text.length > 8) {
           tip.fields.title = {
             value: convertPii(text.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ").slice(0, 120)).text,
             source: "intake",
             locked: false,
           };
         }
-        if (!tip.fields.description.locked) {
+        if (realTx && !tip.fields.description.locked) {
           tip.fields.description = {
             value: convertPii(text.slice(0, 800)).text,
             source: "intake",
             locked: false,
           };
         }
-        tip.intake = "named_and_questions";
-        tip.coachLine = "Got a transcript — review or add a still.";
+        tip.intake = realTx ? "named_and_questions" : "queued";
+        tip.coachLine = realTx
+          ? "Got a transcript — review or add a still."
+          : "ASR dry-run (set GROQ_API_KEY for Whisper) — waiting for real Batch…";
       }
       purgeUri(ev.uri);
       ev.uri = "";
