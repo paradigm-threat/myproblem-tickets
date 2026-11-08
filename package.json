@@ -1,0 +1,15 @@
+{
+  "name": "myproblem-tickets",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tip:write": "node workers/intake/write-tip.mjs",
+    "wake:check": "node workers/intake/wake-batch.mjs",
+    "batch:fixtures": "node workers/batch/drain-and-decommission.mjs fixtures",
+    "test:wake": "node --test workers/intake/wake-batch.test.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.2.0"
+  }
+}

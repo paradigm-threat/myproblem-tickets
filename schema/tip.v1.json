@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://myproblem.app/schema/tip.v1.json",
+  "title": "MyProblemTicketTip",
+  "type": "object",
+  "required": ["schema", "ticket_uuid", "createdAtMs", "updatedAtMs", "status", "fields", "intake", "timeline"],
+  "properties": {
+    "schema": { "const": "myproblem.ticket.tip.v1" },
+    "ticket_uuid": { "type": "string", "format": "uuid" },
+    "claim": { "type": ["string", "null"] },
+    "createdAtMs": { "type": "integer" },
+    "updatedAtMs": { "type": "integer" },
+    "status": { "enum": ["open", "closed"] },
+    "fields": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "object",
+          "properties": {
+            "value": { "type": "string" },
+            "source": { "enum": ["intake", "user"] },
+            "locked": { "type": "boolean" }
+          },
+          "required": ["value", "source", "locked"]
+        },
+        "description": {
+          "type": "object",
+          "properties": {
+            "value": { "type": "string" },
+            "source": { "enum": ["intake", "user"] },
+            "locked": { "type": "boolean" }
+          },
+          "required": ["value", "source", "locked"]
+        }
+      },
+      "required": ["title", "description"]
+    },
+    "coachLine": { "type": "string" },
+    "intake": {
+      "enum": [
+        "draft",
+        "listening",
+        "transcribing",
+        "figuring_out",
+        "named_and_questions",
+        "advice_ready",
+        "queue_project",
+        "needs_user_text",
+        "investigating"
+      ]
+    },
+    "questions": { "type": "array", "items": { "type": "string" } },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "uri", "atMs"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "enum": ["audio", "still", "transcript", "text"] },
+          "uri": { "type": "string" },
+          "sha256": { "type": "string" },
+          "chunkIndex": { "type": ["integer", "null"] },
+          "isFinal": { "type": ["boolean", "null"] },
+          "atMs": { "type": "integer" }
+        }
+      }
+    },
+    "jobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "bin": { "enum": ["asr", "vision", "intake", "project"] },
+          "state": { "enum": ["queued", "leased", "done", "error"] }
+        }
+      }
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "body", "atMs"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": {
+            "enum": [
+              "system",
+              "user_text",
+              "user_audio",
+              "user_still",
+              "server_title",
+              "server_question",
+              "server_advice"
+            ]
+          },
+          "body": { "type": "string" },
+          "atMs": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

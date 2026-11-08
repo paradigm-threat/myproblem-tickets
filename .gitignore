@@ -1,0 +1,9 @@
+node_modules/
+.eval/
+.wake-counts.json
+infra/.last-*-pool-uuid
+.env
+.env.*
+tickets/*/
+!tickets/.gitkeep
+*.pem
