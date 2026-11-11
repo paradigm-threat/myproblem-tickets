@@ -41,6 +41,9 @@ spec:
               cp /code/piiConvert.mjs /app/workers/lib/piiConvert.mjs
               cp /code/ticketAuth.mjs /app/workers/lib/ticketAuth.mjs
               cp /code/asrAttempt.mjs /app/workers/lib/asrAttempt.mjs
+              cp /code/visionAttempt.mjs /app/workers/lib/visionAttempt.mjs
+              cp /code/safetyRestraint.mjs /app/workers/lib/safetyRestraint.mjs
+              cp /code/confidenceGauge.mjs /app/workers/lib/confidenceGauge.mjs
               mkdir -p /data/regions /data/cache
               exec node workers/intake/server.mjs
           ports:

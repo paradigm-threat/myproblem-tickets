@@ -22,15 +22,62 @@ import {
   setPreserve,
   scanQueuedJobs,
   trimHistory,
+  savePublicPost,
+  loadPublicPost,
+  listPublicPosts,
+  removePublicPost,
 } from "../lib/gitTipStore.mjs";
 import { scrubTipPii, convertPii } from "../lib/piiConvert.mjs";
 import { authorizeTicket } from "../lib/ticketAuth.mjs";
 import { classifyAsrAttempt } from "../lib/asrAttempt.mjs";
+import { applySafetyRestraint } from "../lib/safetyRestraint.mjs";
+import { applyBatchReview, applyConfidence, noteRollingClip, toPublicPost } from "../lib/confidenceGauge.mjs";
+import {
+  chatContent,
+  classifyVisionAttempt,
+  absorbNewerTip,
+  composeTicketDescription,
+  evidenceTexts,
+  latestEvidenceText,
+  mergeQuestions,
+  parseVisionReply,
+  shouldDeferVision,
+  visionPrompt,
+} from "../lib/visionAttempt.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "../..");
 const CACHE = process.env.TICKETS_CACHE_DIR || join(ROOT, ".data", "cache");
 const PORT = Number(process.env.PORT || 8787);
+
+let drainChain = Promise.resolve();
+let holdTimer = null;
+
+/** Run queued ASR, then stills, without an operator calling process-jobs. */
+function scheduleDrain(delayMs = 0) {
+  if (delayMs > 0) {
+    if (holdTimer) return;
+    holdTimer = setTimeout(() => {
+      holdTimer = null;
+      scheduleDrain(0);
+    }, delayMs);
+    if (typeof holdTimer.unref === "function") holdTimer.unref();
+    return;
+  }
+  const secret = process.env.OPS_WAKE_SECRET?.trim();
+  drainChain = drainChain
+    .then(() =>
+      fetch(`http://127.0.0.1:${PORT}/api/ops/process-jobs?limit=4`, {
+        method: "POST",
+        headers: secret ? { "x-ops-secret": secret } : {},
+      }).then((r) => {
+        if (!r.ok) console.error("drain_status", r.status);
+      }),
+    )
+    .catch((err) => {
+      console.error("drain_error", err?.message || "drain");
+    });
+}
 
 function cacheWrite(ticketId, evidenceId, buf, ext) {
   const dir = join(CACHE, ticketId);
@@ -201,6 +248,8 @@ async function handle(req, res) {
       const asrError = tip.jobs.some((j) => j.bin === "asr" && j.state === "error");
       const audioPending = tip.evidence.some((e) => e.kind === "audio" && !e.processed && e.uri);
       const before = tip.intake;
+      const safetyCoach =
+        tip.safety?.warned && String(tip.coachLine || "").startsWith("Safety warning");
       const now = Date.now();
       const started = tip.updatedAtMs || tip.createdAtMs || now;
       const dryTxOnly =
@@ -213,23 +262,29 @@ async function handle(req, res) {
       } else if (asrLeased) {
         tip.intake =
           now - started > 10 * 60 * 1000 ? "timeout" : "transcribing";
-        tip.coachLine = tip.intake === "timeout" ? "Transcription stalled — retry." : "Transcribing…";
+        if (!safetyCoach) {
+          tip.coachLine = tip.intake === "timeout" ? "Transcription stalled — retry." : "Transcribing…";
+        }
       } else if (asrError && !asrQueued && !hasRealTx) {
         tip.intake = "queued";
-        tip.coachLine = "Transcription failed — audio kept for retry.";
+        if (!safetyCoach) tip.coachLine = "Transcription failed — audio kept for retry.";
       } else if (dryTxOnly) {
         // Already processed without GROQ — do not pretend we are still queued.
         tip.intake = "queued";
-        tip.coachLine =
-          tip.coachLine?.includes("GROQ") || tip.coachLine?.includes("dry-run")
-            ? tip.coachLine
-            : "ASR dry-run (set GROQ_API_KEY for Whisper) — waiting for real Batch…";
+        if (!safetyCoach) {
+          tip.coachLine =
+            tip.coachLine?.includes("GROQ") || tip.coachLine?.includes("dry-run")
+              ? tip.coachLine
+              : "ASR dry-run (set GROQ_API_KEY for Whisper) — waiting for real Batch…";
+        }
       } else if (asrQueued || audioPending || tip.intake === "transcribing") {
         tip.intake = now - started > 30 * 60 * 1000 ? "timeout" : "queued";
-        tip.coachLine =
-          tip.intake === "timeout"
-            ? "Timed out waiting for Batch — retry sync or re-upload."
-            : "Queued for transcription — waiting for Batch…";
+        if (!safetyCoach) {
+          tip.coachLine =
+            tip.intake === "timeout"
+              ? "Timed out waiting for Batch — retry sync or re-upload."
+              : "Queued for transcription — waiting for Batch…";
+        }
       }
       if (tip.intake !== before) saveTip(region, scrubTipPii(tip), "honest-intake");
       return json(res, 200, tip);
@@ -260,6 +315,9 @@ async function handle(req, res) {
       });
       tip.intake = "figuring_out";
       tip.coachLine = "Figuring out…";
+      applySafetyRestraint(tip);
+      applyConfidence(tip);
+      if (tip.confidence?.public !== true) removePublicPost(region, tip.ticket_uuid);
       scrubTipPii(tip);
       saveTip(region, tip, "user-lock");
       return json(res, 200, tip);
@@ -329,12 +387,38 @@ async function handle(req, res) {
       hotwords,
       reason: "reprocess",
     });
+    scheduleDrain();
     return json(res, 200, {
       ok: true,
       action: "enqueued",
       jobId: job.id,
       gate: { reason: "new_context", needsReupload: false, hotwords },
     });
+  }
+
+  const batchMatch = path.match(/^\/api\/tickets\/([^/]+)\/batch-review$/);
+  if (batchMatch && req.method === "POST") {
+    const id = batchMatch[1];
+    const found = loadTipAnyRegion(id);
+    if (!found) return json(res, 404, { error: "not_found" });
+    if (!denyUnlessAuthorized(req, res, found.tip)) return;
+    const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    const gauge = applyBatchReview(found.tip, { kbHit: body.kbHit === true });
+    if (gauge.public) savePublicPost(found.region, toPublicPost(found.tip));
+    else removePublicPost(found.region, id);
+    scrubTipPii(found.tip);
+    saveTip(found.region, found.tip, gauge.public ? "public-handoff" : "batch-review");
+    return json(res, 200, { confidence: found.tip.confidence, coachLine: found.tip.coachLine });
+  }
+
+  if (path === "/api/public/posts" && req.method === "GET") {
+    return json(res, 200, { posts: listPublicPosts() });
+  }
+  const publicMatch = path.match(/^\/api\/public\/posts\/([^/]+)$/);
+  if (publicMatch && req.method === "GET") {
+    const post = loadPublicPost(publicMatch[1]);
+    if (!post) return json(res, 404, { error: "not_found" });
+    return json(res, 200, post);
   }
 
   const closeMatch = path.match(/^\/api\/tickets\/([^/]+)\/close$/);
@@ -383,20 +467,32 @@ async function handle(req, res) {
         atMs: Date.now(),
         processed: false,
       });
-      if (body.isFinal || body.chunkIndex == null) {
+      const rolling = body.rolling === true;
+      if (body.isFinal || body.chunkIndex == null || rolling) {
         tip.timeline.push({
           id: randomUUID(),
           kind: "user_audio",
-          body: "Final audio attached (ephemeral cache)",
+          body: rolling ? "Rolling audio clip" : "Final audio attached (ephemeral cache)",
           atMs: Date.now(),
         });
-        tip.intake = "queued";
-        tip.coachLine = "Queued for transcription — waiting for Batch…";
+        if (rolling) {
+          noteRollingClip(tip);
+        } else {
+          tip.intake = "queued";
+          if (!String(tip.coachLine || "").startsWith("Safety warning")) {
+            tip.coachLine = "Queued for transcription — waiting for Batch…";
+          }
+        }
         const pending = tip.pendingReprocess?.bin === "asr" ? tip.pendingReprocess : null;
         const hotwords = body.hotwords?.length ? body.hotwords : pending?.hotwords || [];
         if (pending) delete tip.pendingReprocess;
-        enqueueJob(region, tip, "asr", { evidenceId, hotwords, reason: pending ? "reprocess" : "upload" });
+        enqueueJob(region, tip, "asr", {
+          evidenceId,
+          hotwords,
+          reason: rolling ? "rolling" : pending ? "reprocess" : "upload",
+        });
         tip = loadTip(region, id);
+        scheduleDrain();
       } else {
         saveTip(region, tip, "audio-chunk");
       }
@@ -423,6 +519,7 @@ async function handle(req, res) {
       if (pending) delete tip.pendingReprocess;
       enqueueJob(region, tip, "vision", { evidenceId, reason: pending ? "reprocess" : "upload" });
       tip = loadTip(region, id);
+      scheduleDrain();
       return json(res, 200, { ok: true, evidenceId, tip });
     }
     return json(res, 400, { error: "unknown_kind" });
@@ -450,6 +547,8 @@ async function handle(req, res) {
       return json(res, 401, { error: "unauthorized" });
     }
     const queued = scanQueuedJobs(Number(url.searchParams.get("limit") || 10));
+    const rank = { asr: 0, vision: 1, project: 2, intake: 3 };
+    queued.sort((a, b) => (rank[a.bin] ?? 9) - (rank[b.bin] ?? 9));
     const results = [];
     for (const job of queued) {
       const tip = loadTip(job.region, job.ticket_uuid);
@@ -457,29 +556,44 @@ async function handle(req, res) {
         results.push({ id: job.id, error: "tip_missing" });
         continue;
       }
+      if (job.bin === "vision" && shouldDeferVision(tip)) {
+        const coach = "Holding the still until the recording is transcribed.";
+        if (tip.coachLine !== coach) {
+          tip.coachLine = coach;
+          if (tip.intake === "investigating") tip.intake = "queued";
+          saveTip(job.region, tip, "vision-hold");
+        }
+        results.push({ id: job.id, deferred: "wait_for_speech" });
+        continue;
+      }
       const evidenceId = job.payload?.evidenceId;
       const ev =
         tip.evidence.find((e) => e.id === evidenceId) ||
         tip.evidence.filter((e) => e.kind === (job.bin === "asr" ? "audio" : "still")).at(-1);
       if (!ev?.uri) {
+        absorbNewerTip(tip, loadTip(job.region, job.ticket_uuid));
         setJobState(job.region, tip, job.id, "error");
         results.push({ id: job.id, error: "no_cache_uri" });
         continue;
       }
       const fp = resolveCache(ev.uri);
       if (!fp) {
+        absorbNewerTip(tip, loadTip(job.region, job.ticket_uuid));
         setJobState(job.region, tip, job.id, "error");
         results.push({ id: job.id, error: "cache_missing" });
         continue;
       }
+      absorbNewerTip(tip, loadTip(job.region, job.ticket_uuid));
       tip.intake = job.bin === "asr" ? "transcribing" : "investigating";
       tip.coachLine = job.bin === "asr" ? "Transcribing…" : "Processing still…";
       setJobState(job.region, tip, job.id, "leased");
 
       const whisperModel = process.env.GROQ_WHISPER_MODEL || "whisper-large-v3";
+      const visionModel = process.env.GROQ_VISION_MODEL || "qwen/qwen3.8-27b";
       let text = `[dry-run] ${fp.split("/").pop()}`;
       let model = "dry-run";
-      let asrFail = null;
+      let mediaFail = null;
+      let visionQuestion = "";
       if (job.bin === "asr") {
         let attempt = classifyAsrAttempt({ hasKey: false });
         if (process.env.GROQ_API_KEY) {
@@ -508,60 +622,160 @@ async function handle(req, res) {
           text = attempt.text;
           model = whisperModel;
         } else if (attempt.kind !== "dry-run") {
-          asrFail = attempt;
+          mediaFail = attempt;
+        }
+      } else if (job.bin === "vision") {
+        const said = latestEvidenceText(tip, "transcript");
+        let attempt = classifyVisionAttempt({ hasKey: false });
+        if (process.env.GROQ_API_KEY) {
+          try {
+            const jpeg = readFileSync(fp);
+            const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: visionModel,
+                temperature: 0.2,
+                max_tokens: 240,
+                reasoning_effort: "none",
+                response_format: { type: "json_object" },
+                messages: [
+                  {
+                    role: "user",
+                    content: [
+                      { type: "text", text: visionPrompt({ transcript: said }) },
+                      {
+                        type: "image_url",
+                        image_url: { url: `data:image/jpeg;base64,${jpeg.toString("base64")}` },
+                      },
+                    ],
+                  },
+                ],
+              }),
+            });
+            const j = r.ok ? await r.json().catch(() => ({})) : {};
+            attempt = classifyVisionAttempt({
+              hasKey: true,
+              httpStatus: r.status,
+              text: chatContent(j),
+            });
+          } catch {
+            attempt = classifyVisionAttempt({ hasKey: true, threw: true });
+          }
+        }
+        if (attempt.kind === "ok") {
+          const parsed = parseVisionReply(attempt.text);
+          if (!parsed.caption) {
+            mediaFail = { kind: "error", reason: "empty_caption" };
+          } else {
+            text = parsed.caption;
+            visionQuestion = parsed.question;
+            model = visionModel;
+          }
+        } else if (attempt.kind !== "dry-run") {
+          mediaFail = attempt;
         }
       }
-      if (asrFail) {
-        const retry = asrFail.kind === "retry";
+      if (mediaFail) {
+        const retry = mediaFail.kind === "retry";
+        const vision = job.bin === "vision";
         tip.intake = "queued";
         tip.coachLine = retry
-          ? "Transcription busy — will retry."
-          : "Transcription failed — audio kept for retry.";
+          ? vision
+            ? "Photo analysis busy — will retry."
+            : "Transcription busy — will retry."
+          : vision
+            ? "Photo analysis failed — still kept for retry."
+            : "Transcription failed — audio kept for retry.";
+        absorbNewerTip(tip, loadTip(job.region, job.ticket_uuid));
         scrubTipPii(tip);
         setJobState(job.region, tip, job.id, retry ? "queued" : "error");
-        results.push({ id: job.id, error: asrFail.reason, retry });
+        results.push({ id: job.id, error: mediaFail.reason, retry });
         continue;
       }
       text = convertPii(text).text;
+      const real = model !== "dry-run" && !text.startsWith("[dry-run]");
       tip.evidence.push({
         id: randomUUID(),
         kind: job.bin === "asr" ? "transcript" : "text",
+        role: job.bin === "vision" ? "vision" : undefined,
         uri: "",
         text,
         model,
         atMs: Date.now(),
         audioEvidenceId: ev.id,
       });
+      if (real && !tip.fields.description.locked) {
+        const description = composeTicketDescription({
+          transcript: latestEvidenceText(tip, "transcript"),
+          vision: evidenceTexts(tip, "vision"),
+        });
+        if (description) {
+          tip.fields.description = {
+            value: convertPii(description).text,
+            source: "intake",
+            locked: false,
+          };
+        }
+      }
       if (job.bin === "asr") {
-        const realTx = model !== "dry-run" && !text.startsWith("[dry-run]");
-        if (realTx && !tip.fields.title.locked && text.length > 8) {
+        if (real && !tip.fields.title.locked && text.length > 8) {
           tip.fields.title = {
             value: convertPii(text.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ").slice(0, 120)).text,
             source: "intake",
             locked: false,
           };
         }
-        if (realTx && !tip.fields.description.locked) {
-          tip.fields.description = {
-            value: convertPii(text.slice(0, 800)).text,
+        const stillsWaiting = (tip.jobs || []).some(
+          (j) => j.bin === "vision" && (j.state === "queued" || j.state === "leased"),
+        );
+        tip.intake = real && !stillsWaiting ? "named_and_questions" : "queued";
+        tip.coachLine = real
+          ? stillsWaiting
+            ? "Transcribed — describing the stills…"
+            : "Got a transcript — review or add a still."
+          : "ASR dry-run (set GROQ_API_KEY for Whisper) — waiting for real Batch…";
+      } else if (job.bin === "vision") {
+        const said = latestEvidenceText(tip, "transcript");
+        if (real && !said && !tip.fields.title.locked && text.length > 8) {
+          tip.fields.title = {
+            value: convertPii(text.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ").slice(0, 120)).text,
             source: "intake",
             locked: false,
           };
         }
-        tip.intake = realTx ? "named_and_questions" : "queued";
-        tip.coachLine = realTx
-          ? "Got a transcript — review or add a still."
-          : "ASR dry-run (set GROQ_API_KEY for Whisper) — waiting for real Batch…";
+        if (real && visionQuestion) {
+          tip.questions = mergeQuestions(tip.questions, convertPii(visionQuestion).text);
+        }
+        tip.intake = real ? "named_and_questions" : "queued";
+        tip.coachLine = real
+          ? visionQuestion
+            ? "Need another look — see the question."
+            : said
+              ? "Matched the still to what you said — review the description."
+              : "Described the still — add audio if this is not the problem."
+          : "Photo analysis dry-run — description unchanged.";
+      }
+      if (real) {
+        applySafetyRestraint(tip);
+        applyConfidence(tip);
       }
       purgeUri(ev.uri);
       ev.uri = "";
       ev.processed = true;
       ev.purgedAtMs = Date.now();
+      absorbNewerTip(tip, loadTip(job.region, job.ticket_uuid));
       scrubTipPii(tip);
       setJobState(job.region, tip, job.id, "done");
       results.push({ id: job.id, ok: true, model, textPreview: text.slice(0, 120) });
     }
-    return json(res, 200, { processed: results.filter((r) => r.ok).length, results });
+    const processed = results.filter((r) => r.ok).length;
+    if (processed > 0) scheduleDrain(0);
+    else if (results.some((r) => r.deferred)) scheduleDrain(5000);
+    return json(res, 200, { processed, results });
   }
 
   return json(res, 404, { error: "not_found" });

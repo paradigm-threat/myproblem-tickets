@@ -29,6 +29,9 @@ export function convertPii(text, opts = {}) {
   out = out.replace(UNIT_RE, "");
   out = out.replace(STREET_RE, `an address in ${city}`);
   out = out.replace(MY_NAME_RE, "my name is [withheld]");
+  // Unit removal can leave "Street, ." before the street token is replaced.
+  out = out.replace(/,\s*\./g, ".");
+  out = out.replace(/\s+([,.;:])/g, "$1");
   out = out.replace(/\s{2,}/g, " ").trim();
 
   return { text: out, changed: out !== before };

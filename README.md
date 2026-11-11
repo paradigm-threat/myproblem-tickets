@@ -9,7 +9,7 @@ Regional Relay app git SoT for MyProblem tips. **No Neon.** Text + media links o
 | [`regions/georgia`](regions/georgia) | `myproblem-tickets-georgia` |
 | [`regions/israel`](regions/israel) | `myproblem-tickets-israel` |
 
-Each is a Relay app (`.relay.yaml` + CleverScript hooks). **UUID = access** — no ticket listing.
+Each is a Relay app (`.relay.yaml` + CleverScript hooks). **UUID = access** — no private ticket listing. A human handoff writes `public/<uuid>.json` (redacted, no claim). That board is the only public list.
 
 ## Hosts
 
@@ -26,7 +26,8 @@ Vercel hosts marketing + APK only.
 .relay.yaml
 hooks/server/get.cs          # exact UUID paths only
 hooks/server/pre-commit.cs   # reject binaries under tickets/
-tickets/<uuid>/tip.json      # preserve, intake, evidence links
+tickets/<uuid>/tip.json      # preserve, intake, evidence links, confidence
+public/<uuid>.json           # redacted human-handoff post only
 tickets/<uuid>/index.md
 tickets/<uuid>/jobs/<id>.json
 ```

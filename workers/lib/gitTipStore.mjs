@@ -209,9 +209,70 @@ export function countQueuedByBin() {
  * Close tip: delete tree unless preserve.
  * Returns { purged: boolean, tip?: tip }.
  */
+function publicPath(region, uuid) {
+  return join(regionRoot(region), "public", `${uuid}.json`);
+}
+
+/** Redacted board entry. Not a private ticket and not a claim. */
+export function savePublicPost(region, post) {
+  if (!post?.ticket_uuid) throw new Error("public_post_requires_uuid");
+  const dir = join(regionRoot(region), "public");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(publicPath(region, post.ticket_uuid), JSON.stringify(post, null, 2) + "\n");
+  git(region, ["add", `public/${post.ticket_uuid}.json`]);
+  try {
+    git(region, ["commit", "-m", `public(${post.ticket_uuid}): publish`]);
+  } catch (e) {
+    if (!String(e.stderr || e.message || e).includes("nothing to commit")) throw e;
+  }
+  return post;
+}
+
+export function loadPublicPost(uuid) {
+  for (const region of REGIONS) {
+    const p = publicPath(region, uuid);
+    if (!existsSync(p)) continue;
+    return JSON.parse(readFileSync(p, "utf8"));
+  }
+  return null;
+}
+
+/** Published posts only. Never a list of private tickets. */
+export function listPublicPosts() {
+  const out = [];
+  for (const region of REGIONS) {
+    const dir = join(regionRoot(region), "public");
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".json")) continue;
+      const post = JSON.parse(readFileSync(join(dir, name), "utf8"));
+      out.push({
+        ticket_uuid: post.ticket_uuid,
+        title: post.title || "",
+        region: post.region || region,
+      });
+    }
+  }
+  return out;
+}
+
+export function removePublicPost(region, uuid) {
+  const p = publicPath(region, uuid);
+  if (!existsSync(p)) return false;
+  rmSync(p, { force: true });
+  git(region, ["add", "-A", `public/${uuid}.json`]);
+  try {
+    git(region, ["commit", "-m", `public(${uuid}): unpublish`]);
+  } catch (e) {
+    if (!String(e.stderr || e.message || e).includes("nothing to commit")) throw e;
+  }
+  return true;
+}
+
 export function closeTicket(region, uuid) {
   const tip = loadTip(region, uuid);
   if (!tip) return { purged: false, error: "not_found" };
+  if (!tip.preserve) removePublicPost(region, uuid);
   if (tip.preserve) {
     tip.status = "closed";
     saveTip(region, tip, "close-preserved");
