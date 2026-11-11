@@ -40,6 +40,7 @@ spec:
               cp /code/gitTipStore.mjs /app/workers/lib/gitTipStore.mjs
               cp /code/piiConvert.mjs /app/workers/lib/piiConvert.mjs
               cp /code/ticketAuth.mjs /app/workers/lib/ticketAuth.mjs
+              cp /code/asrAttempt.mjs /app/workers/lib/asrAttempt.mjs
               mkdir -p /data/regions /data/cache
               exec node workers/intake/server.mjs
           ports:

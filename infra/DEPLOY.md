@@ -17,6 +17,8 @@ kubectl -n myproblem create configmap intake-code \
   --from-file=wake-batch.mjs=workers/intake/wake-batch.mjs \
   --from-file=gitTipStore.mjs=workers/lib/gitTipStore.mjs \
   --from-file=piiConvert.mjs=workers/lib/piiConvert.mjs \
+  --from-file=ticketAuth.mjs=workers/lib/ticketAuth.mjs \
+  --from-file=asrAttempt.mjs=workers/lib/asrAttempt.mjs \
   --from-file=package.json=<(echo '{"type":"module","dependencies":{}}') \
   --dry-run=client -o yaml | kubectl apply -f -
 # Also mount regions/ or sync via git clone in the pod (preferred long-term)
@@ -24,7 +26,7 @@ kubectl apply -f infra/k8s/intake-bringup.yaml
 kubectl -n myproblem rollout restart deployment/intake
 ```
 
-**Persistence:** tip git lives on hostPath `/var/lib/myproblem-intake/regions` (survives Recreate). Cache stays `emptyDir`. ConfigMap must include `ticketAuth.mjs`.
+**Persistence:** tip git lives on hostPath `/var/lib/myproblem-intake/regions` (survives Recreate). Cache stays `emptyDir`. ConfigMap must include `ticketAuth.mjs` and `asrAttempt.mjs`.
 
 Secrets: `TICKETS_API_SECRET`, `OPS_WAKE_SECRET`, `REQUIRE_TICKET_CLAIM`. Optional `GROQ_API_KEY` on the Intake secret enables Whisper via `POST /api/ops/process-jobs` (without it, ASR jobs dry-run and do **not** rename the ticket).
 

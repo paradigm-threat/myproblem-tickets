@@ -9,7 +9,7 @@
     "intake:serve": "node workers/intake/server.mjs",
     "batch:fixtures": "node workers/batch/drain-and-decommission.mjs fixtures",
     "test:wake": "node --test workers/intake/wake-batch.test.mjs",
-    "test:git": "node --test workers/lib/gitTipStore.test.mjs workers/lib/piiConvert.test.mjs workers/lib/ticketAuth.test.mjs",
+    "test:git": "node --test workers/lib/gitTipStore.test.mjs workers/lib/piiConvert.test.mjs workers/lib/ticketAuth.test.mjs workers/lib/asrAttempt.test.mjs",
     "test:kb": "bash scripts/e2e-kb-research.sh",
     "kb:research": "node workers/batch/research-kb-assessment.mjs",
     "test": "npm run test:wake && npm run test:git && node --test workers/lib/kbStore.test.mjs workers/batch/research-kb-assessment.test.mjs",

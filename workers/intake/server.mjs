@@ -25,6 +25,7 @@ import {
 } from "../lib/gitTipStore.mjs";
 import { scrubTipPii, convertPii } from "../lib/piiConvert.mjs";
 import { authorizeTicket } from "../lib/ticketAuth.mjs";
+import { classifyAsrAttempt } from "../lib/asrAttempt.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "../..");
@@ -95,10 +96,25 @@ function denyUnlessAuthorized(req, res, tip) {
   return true;
 }
 
+const MAX_BODY_BYTES = Number(process.env.INTAKE_MAX_BODY_BYTES || 8 * 1024 * 1024);
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (c) => chunks.push(c));
+    let size = 0;
+    let failed = false;
+    req.on("data", (c) => {
+      if (failed) return;
+      size += c.length;
+      if (size > MAX_BODY_BYTES) {
+        failed = true;
+        const err = new Error("body_too_large");
+        err.code = "body_too_large";
+        reject(err);
+        return;
+      }
+      chunks.push(c);
+    });
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
@@ -121,7 +137,16 @@ function parseRegion(raw) {
   return REGIONS.includes(r) ? r : null;
 }
 
-const server = createServer(async (req, res) => {
+const server = createServer((req, res) => {
+  handle(req, res).catch((err) => {
+    if (res.headersSent) return;
+    if (err?.code === "body_too_large") return json(res, 413, { error: "body_too_large" });
+    console.error("intake_error", err?.code || err?.message || "internal");
+    return json(res, 500, { error: "internal" });
+  });
+});
+
+async function handle(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const path = url.pathname;
 
@@ -173,6 +198,7 @@ const server = createServer(async (req, res) => {
       );
       const asrQueued = tip.jobs.some((j) => j.bin === "asr" && j.state === "queued");
       const asrLeased = tip.jobs.some((j) => j.bin === "asr" && j.state === "leased");
+      const asrError = tip.jobs.some((j) => j.bin === "asr" && j.state === "error");
       const audioPending = tip.evidence.some((e) => e.kind === "audio" && !e.processed && e.uri);
       const before = tip.intake;
       const now = Date.now();
@@ -188,6 +214,9 @@ const server = createServer(async (req, res) => {
         tip.intake =
           now - started > 10 * 60 * 1000 ? "timeout" : "transcribing";
         tip.coachLine = tip.intake === "timeout" ? "Transcription stalled — retry." : "Transcribing…";
+      } else if (asrError && !asrQueued && !hasRealTx) {
+        tip.intake = "queued";
+        tip.coachLine = "Transcription failed — audio kept for retry.";
       } else if (dryTxOnly) {
         // Already processed without GROQ — do not pretend we are still queued.
         tip.intake = "queued";
@@ -447,28 +476,51 @@ const server = createServer(async (req, res) => {
       tip.coachLine = job.bin === "asr" ? "Transcribing…" : "Processing still…";
       setJobState(job.region, tip, job.id, "leased");
 
+      const whisperModel = process.env.GROQ_WHISPER_MODEL || "whisper-large-v3";
       let text = `[dry-run] ${fp.split("/").pop()}`;
       let model = "dry-run";
-      if (job.bin === "asr" && process.env.GROQ_API_KEY) {
-        try {
-          const form = new FormData();
-          form.append("file", new Blob([readFileSync(fp)]), "audio.wav");
-          form.append("model", process.env.GROQ_WHISPER_MODEL || "whisper-large-v3");
-          form.append("language", "en");
-          form.append("response_format", "json");
-          const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
-            body: form,
-          });
-          if (r.ok) {
-            const j = await r.json();
-            text = j.text || text;
-            model = "whisper-large-v3";
+      let asrFail = null;
+      if (job.bin === "asr") {
+        let attempt = classifyAsrAttempt({ hasKey: false });
+        if (process.env.GROQ_API_KEY) {
+          try {
+            const form = new FormData();
+            form.append("file", new Blob([readFileSync(fp)]), "audio.wav");
+            form.append("model", whisperModel);
+            form.append("language", "en");
+            form.append("response_format", "json");
+            const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+              body: form,
+            });
+            const j = r.ok ? await r.json().catch(() => ({})) : {};
+            attempt = classifyAsrAttempt({
+              hasKey: true,
+              httpStatus: r.status,
+              text: j.text || "",
+            });
+          } catch {
+            attempt = classifyAsrAttempt({ hasKey: true, threw: true });
           }
-        } catch {
-          text = `${text} (groq_error)`;
         }
+        if (attempt.kind === "ok") {
+          text = attempt.text;
+          model = whisperModel;
+        } else if (attempt.kind !== "dry-run") {
+          asrFail = attempt;
+        }
+      }
+      if (asrFail) {
+        const retry = asrFail.kind === "retry";
+        tip.intake = "queued";
+        tip.coachLine = retry
+          ? "Transcription busy — will retry."
+          : "Transcription failed — audio kept for retry.";
+        scrubTipPii(tip);
+        setJobState(job.region, tip, job.id, retry ? "queued" : "error");
+        results.push({ id: job.id, error: asrFail.reason, retry });
+        continue;
       }
       text = convertPii(text).text;
       tip.evidence.push({
@@ -513,7 +565,7 @@ const server = createServer(async (req, res) => {
   }
 
   return json(res, 404, { error: "not_found" });
-});
+}
 
 server.listen(PORT, () => {
   console.log(`myproblem-intake git SoT on :${PORT} regions=${REGIONS.join(",")}`);
