@@ -1,6 +1,5 @@
-# TLS terminator for intake.myproblem.app
-# Tickets → :8787, Clevertree Chat → :8790
-# hostNetwork: ACME HTTP-01 on :80, HTTPS on :443.
+# Dual-domain TLS: api.clevertree.chat (Cleverchat) + intake.myproblem.app (tickets + chat paths)
+# Chat host → :8790, tickets → :8787. hostNetwork: ACME HTTP-01 on :80, HTTPS on :443.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,6 +10,12 @@ data:
     {
       email hostmaster@myproblem.app
     }
+
+    api.clevertree.chat {
+      encode gzip
+      reverse_proxy 127.0.0.1:8790
+    }
+
     intake.myproblem.app {
       encode gzip
 
