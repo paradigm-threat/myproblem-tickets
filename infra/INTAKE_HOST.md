@@ -11,6 +11,7 @@
 | Auth | UUID capability; `REQUIRE_TICKET_CLAIM=1` → Bearer/`x-ticket-claim` required |
 | Gateway | `relay-gateway` renders tip.json / index.md by UUID path (pending full mount) |
 | Commit worker | `workers/intake/server.mjs` (`infra/k8s/intake-bringup.yaml`) |
+| Clevertree Chat host | `python3 scripts/chat_host.py 8790` from `clevertree-chat` — `/chat`, `/api/chat`, `/api/chat/ws` (Caddy reverse-proxy; see clevertree-chat `docs/chat-host.md`) |
 | TLS | `infra/k8s/intake-caddy.yaml` — certs at hostPath `/var/lib/myproblem-caddy` |
 | Batch | Ephemeral `myproblem-batch` / A30 — wake when job files queued |
 
