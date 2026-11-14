@@ -20,9 +20,8 @@ spec:
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      # Same node as Caddy hostPorts — tip git must stay on this host.
-      nodeSelector:
-        kubernetes.io/hostname: prod-instance-17941481574532202
+      # Single-node Intake Spot — do not pin hostname (Spot replaces instance ids).
+      # Tip git lives on hostPath; one worker is enough for this stand.
       containers:
         - name: intake
           image: node:22-bookworm-slim

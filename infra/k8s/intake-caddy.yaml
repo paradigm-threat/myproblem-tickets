@@ -64,8 +64,7 @@ spec:
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      nodeSelector:
-        kubernetes.io/hostname: prod-instance-17941481574532202
+      # Single-node Intake Spot — do not pin hostname (Spot replaces instance ids).
       containers:
         - name: caddy
           image: caddy:2.8-alpine
