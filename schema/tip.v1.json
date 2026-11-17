@@ -80,7 +80,17 @@
           "isFinal": { "type": ["boolean", "null"] },
           "atMs": { "type": "integer" },
           "text": { "type": "string" },
-          "processed": { "type": "boolean" }
+          "processed": { "type": "boolean" },
+          "choice": {
+            "type": "boolean",
+            "description": "APK/light-AI nomination or Batch-final public still; only Batch links CDN"
+          },
+          "scrubbed": {
+            "type": "boolean",
+            "description": "True when still is safe for public / Bunny"
+          },
+          "bunnyPath": { "type": "string" },
+          "purgedAtMs": { "type": "integer" }
         }
       }
     },

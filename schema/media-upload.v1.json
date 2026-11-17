@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://myproblem.app/schema/media-upload.v1.json",
+  "title": "MyProblemMediaUpload",
+  "type": "object",
+  "required": ["schema", "provider", "storage_zone", "cdn_host", "path_prefix"],
+  "properties": {
+    "schema": { "const": "myproblem.media-upload.v1" },
+    "provider": { "const": "bunny" },
+    "storage_zone": {
+      "type": "string",
+      "description": "Bunny storage zone name (shared across tip repos for now)"
+    },
+    "cdn_host": {
+      "type": "string",
+      "description": "Public CDN base URL, no trailing slash"
+    },
+    "storage_host": {
+      "type": "string",
+      "default": "storage.bunnycdn.com"
+    },
+    "path_prefix": {
+      "type": "string",
+      "description": "Object-key prefix for this tip repo (georgia|israel|fixit)"
+    },
+    "notes": { "type": "string" }
+  }
+}

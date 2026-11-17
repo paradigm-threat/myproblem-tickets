@@ -342,11 +342,12 @@ export function toPublicPost(tip) {
       (e) =>
         e.kind === "still" &&
         e.uri &&
+        (e.choice === true || e.scrubbed === true) &&
         (e.scrubbed === true ||
           String(e.uri).includes("b-cdn.net") ||
           String(e.uri).startsWith("/pilot/")),
     )
-    .map((e) => ({ id: e.id, uri: e.uri }));
+    .map((e) => ({ id: e.id, uri: e.uri, choice: e.choice === true }));
   return {
     schema: "myproblem.public.post.v1",
     ticket_uuid: tip.ticket_uuid,

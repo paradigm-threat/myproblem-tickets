@@ -36,7 +36,11 @@ export function scrubStillForPublic(_jpegBytes) {
 
 export function publicStillAllowed(evidence) {
   if (!evidence || evidence.kind !== "still") return false;
-  if (evidence.scrubbed === true && evidence.uri) return true;
   if (evidence.uri && String(evidence.uri).startsWith("/pilot/")) return true;
+  // Batch-linked choice stills only (CDN after scrub confirm).
+  if (evidence.choice === true && evidence.scrubbed === true && evidence.uri) return true;
+  if (evidence.scrubbed === true && evidence.uri && String(evidence.uri).includes("b-cdn.net")) {
+    return true;
+  }
   return false;
 }

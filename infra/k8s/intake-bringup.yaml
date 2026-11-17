@@ -79,6 +79,14 @@ spec:
                   name: intake-secrets
                   key: GROQ_API_KEY
                   optional: true
+            # Shared Bunny zone API key. Zone/CDN/path_prefix live in each tip
+            # repo’s media-upload.json (georgia|israel|fixit).
+            - name: BUNNY_STORAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: intake-secrets
+                  key: BUNNY_STORAGE_API_KEY
+                  optional: true
           volumeMounts:
             - name: code
               mountPath: /code

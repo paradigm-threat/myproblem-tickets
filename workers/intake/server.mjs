@@ -33,7 +33,7 @@ import {
   removePublicPost,
 } from "../lib/gitTipStore.mjs";
 import { suggestPublicSlug } from "../lib/suggestSlug.mjs";
-import { bunnyExpireTicketMedia } from "../lib/bunnyMedia.mjs";
+import { bunnyExpireTicketMedia, finalizeChoiceStills } from "../lib/bunnyMedia.mjs";
 import { scrubTipPii, convertPii } from "../lib/piiConvert.mjs";
 import { authorizeTicket } from "../lib/ticketAuth.mjs";
 import { classifyAsrAttempt } from "../lib/asrAttempt.mjs";
@@ -277,15 +277,58 @@ async function handle(req, res) {
     return json(res, 200, { suggestion, slug: found.tip.live_slug || null, applied: false });
   }
 
-  // Owner unpublish: drop live slug; tip stays (public /t/ → 404).
+  // Owner unpublish: drop live slug; tip stays (public /t/ → 404). Expire Bunny stills.
   const unpublishSlugMatch = path.match(/^\/api\/tickets\/([^/]+)\/unpublish-slug$/);
   if (unpublishSlugMatch && req.method === "POST") {
     const id = unpublishSlugMatch[1];
     const found = loadTipAnyRegion(id);
     if (!found) return json(res, 404, { error: "not_found" });
     if (!denyUnlessAuthorized(req, res, found.tip)) return;
+    try {
+      await bunnyExpireTicketMedia(found.tip);
+    } catch {
+      /* best-effort */
+    }
+    for (const ev of found.tip.evidence || []) {
+      if (ev.kind === "still" && ev.uri && String(ev.uri).includes("b-cdn.net")) {
+        ev.uri = "";
+        ev.choice = false;
+        ev.scrubbed = false;
+        ev.purgedAtMs = Date.now();
+      }
+    }
     const tip = unpublishLiveSlug(found.region, found.tip);
     return json(res, 200, { tip, slug: null, unpublished: true });
+  }
+
+  // Batch: link final choice stills to Bunny; delete unused cached stills.
+  // APK may nominate choice on upload; only this path uploads to CDN.
+  const choiceMediaMatch = path.match(/^\/api\/tickets\/([^/]+)\/choice-media$/);
+  if (choiceMediaMatch && req.method === "POST") {
+    if (!hasApiSecret(req)) return json(res, 401, { error: "unauthorized" });
+    const id = choiceMediaMatch[1];
+    const found = loadTipAnyRegion(id);
+    if (!found) return json(res, 404, { error: "not_found" });
+    const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    const choice_ids = Array.isArray(body.choice_ids)
+      ? body.choice_ids.map(String)
+      : Array.isArray(body.choiceIds)
+        ? body.choiceIds.map(String)
+        : [];
+    const result = await finalizeChoiceStills(found.tip, {
+      choice_ids,
+      confirm_scrubbed: body.confirm_scrubbed === true || body.confirmScrubbed === true,
+      resolveCache,
+      purgeUri,
+      readFile: (fp) => readFileSync(fp),
+    });
+    scrubTipPii(found.tip);
+    saveTip(found.region, found.tip, "choice-media");
+    if (found.tip.live_slug) {
+      const post = toPublicPost(found.tip);
+      if (post.media?.length) savePublicPost(found.region, post);
+    }
+    return json(res, 200, { ...result, tip: found.tip });
   }
 
   // Batch/ops: set resolution (SI-owned). Requires API secret.
@@ -515,8 +558,13 @@ async function handle(req, res) {
     const found = loadTipAnyRegion(id);
     if (!found) return json(res, 404, { error: "not_found" });
     if (!denyUnlessAuthorized(req, res, found.tip)) return;
-    // Purge linked cache media when deleting
+    // Purge cache + Bunny when deleting
     if (!found.tip.preserve) {
+      try {
+        await bunnyExpireTicketMedia(found.tip);
+      } catch {
+        /* best-effort */
+      }
       for (const ev of found.tip.evidence || []) {
         if (ev.uri) purgeUri(ev.uri);
       }
@@ -588,7 +636,9 @@ async function handle(req, res) {
     }
 
     if (body.kind === "still") {
+      // Cache only — never Bunny here. APK may nominate choice; Batch finalizes CDN.
       const { uri } = cacheWrite(id, evidenceId, buf, ".jpg");
+      const nominated = body.choice === true || body.nominated === true;
       tip.evidence.push({
         id: evidenceId,
         kind: "still",
@@ -596,11 +646,15 @@ async function handle(req, res) {
         sha256: hash,
         atMs: Date.now(),
         processed: false,
+        choice: nominated,
+        scrubbed: false,
       });
       tip.timeline.push({
         id: randomUUID(),
         kind: "user_still",
-        body: "Still cached for Batch vision",
+        body: nominated
+          ? "Choice still cached for Batch (CDN only after Batch link)"
+          : "Still cached for Batch vision",
         atMs: Date.now(),
       });
       const pending = tip.pendingReprocess?.bin === "vision" ? tip.pendingReprocess : null;
@@ -851,10 +905,13 @@ async function handle(req, res) {
         applySafetyRestraint(tip);
         applyConfidence(tip);
       }
-      purgeUri(ev.uri);
-      ev.uri = "";
       ev.processed = true;
-      ev.purgedAtMs = Date.now();
+      // Audio: purge cache after ASR. Stills: keep cache:// until Batch choice-media.
+      if (job.bin === "asr" || ev.kind === "audio") {
+        purgeUri(ev.uri);
+        ev.uri = "";
+        ev.purgedAtMs = Date.now();
+      }
       absorbNewerTip(tip, loadTip(job.region, job.ticket_uuid));
       scrubTipPii(tip);
       setJobState(job.region, tip, job.id, "done");
