@@ -16,6 +16,8 @@ kubectl -n myproblem create configmap intake-code \
   --from-file=server.mjs=workers/intake/server.mjs \
   --from-file=wake-batch.mjs=workers/intake/wake-batch.mjs \
   --from-file=gitTipStore.mjs=workers/lib/gitTipStore.mjs \
+  --from-file=suggestSlug.mjs=workers/lib/suggestSlug.mjs \
+  --from-file=bunnyMedia.mjs=workers/lib/bunnyMedia.mjs \
   --from-file=piiConvert.mjs=workers/lib/piiConvert.mjs \
   --from-file=ticketAuth.mjs=workers/lib/ticketAuth.mjs \
   --from-file=asrAttempt.mjs=workers/lib/asrAttempt.mjs \

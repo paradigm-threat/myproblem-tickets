@@ -37,6 +37,8 @@ spec:
               cp /code/server.mjs /app/workers/intake/server.mjs
               cp /code/wake-batch.mjs /app/workers/intake/wake-batch.mjs
               cp /code/gitTipStore.mjs /app/workers/lib/gitTipStore.mjs
+              cp /code/suggestSlug.mjs /app/workers/lib/suggestSlug.mjs
+              cp /code/bunnyMedia.mjs /app/workers/lib/bunnyMedia.mjs
               cp /code/piiConvert.mjs /app/workers/lib/piiConvert.mjs
               cp /code/ticketAuth.mjs /app/workers/lib/ticketAuth.mjs
               cp /code/asrAttempt.mjs /app/workers/lib/asrAttempt.mjs
