@@ -313,14 +313,28 @@ export function saveTip(region, tip, intent = "update") {
   return tip;
 }
 
+/**
+ * Create tip. `mint_slug` defaults true (APK mint-on-create).
+ * Web submit passes mint_slug: false, then opt-in via suggest-slug apply.
+ */
 export function createTicket(region, opts = {}) {
   const id = randomUUID();
-  const slug = mintLiveSlug(region, id);
+  const mintSlug = opts.mint_slug !== false;
+  const slug = mintSlug ? mintLiveSlug(region, id) : null;
   const tip = emptyTip(id, region, {
     raiser_visitor_id: opts.raiser_visitor_id ?? null,
     live_slug: slug,
   });
   return saveTip(region, tip, "create");
+}
+
+/** Clear public live slug; tip stays private (claim still works). */
+export function unpublishLiveSlug(region, tip) {
+  if (!tip) return null;
+  if (tip.live_slug) dropLiveSlug(region, tip.live_slug);
+  tip.live_slug = null;
+  tip.updatedAtMs = Date.now();
+  return saveTip(region, tip, "unpublish-slug");
 }
 
 export function enqueueJob(region, tip, bin, payload = {}) {

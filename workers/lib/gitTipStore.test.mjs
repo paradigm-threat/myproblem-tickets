@@ -27,6 +27,12 @@ describe("gitTipStore", () => {
     assert.equal(loaded.claim, tip.claim);
   });
 
+  it("can create without a public live slug", () => {
+    const tip = createTicket("georgia", { mint_slug: false });
+    assert.ok(tip.ticket_uuid);
+    assert.equal(tip.live_slug, null);
+  });
+
   it("drops live slug when SI marks solved", () => {
     const tip = createTicket("georgia");
     const slug = tip.live_slug;

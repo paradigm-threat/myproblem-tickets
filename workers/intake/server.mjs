@@ -23,6 +23,7 @@ import {
   setTipResolution,
   resolveLiveSlug,
   setLiveSlug,
+  unpublishLiveSlug,
   listLiveSlugKeys,
   scanQueuedJobs,
   trimHistory,
@@ -227,11 +228,13 @@ async function handle(req, res) {
       (typeof body.raiser_visitor_id === "string" && body.raiser_visitor_id.trim()) ||
       (typeof req.headers["x-visitor-id"] === "string" && req.headers["x-visitor-id"].trim()) ||
       null;
-    const tip = createTicket(region, { raiser_visitor_id: raiser });
+    // mint_slug defaults true (APK). Web submit sends mint_slug: false.
+    const mint_slug = body.mint_slug !== false;
+    const tip = createTicket(region, { raiser_visitor_id: raiser, mint_slug });
     return json(res, 200, {
       ticket_uuid: tip.ticket_uuid,
       claim: tip.claim,
-      slug: tip.live_slug,
+      slug: tip.live_slug || null,
       region,
       tip,
     });
@@ -272,6 +275,17 @@ async function handle(req, res) {
       return json(res, 200, { suggestion, tip, slug: tip.live_slug, applied: true });
     }
     return json(res, 200, { suggestion, slug: found.tip.live_slug || null, applied: false });
+  }
+
+  // Owner unpublish: drop live slug; tip stays (public /t/ → 404).
+  const unpublishSlugMatch = path.match(/^\/api\/tickets\/([^/]+)\/unpublish-slug$/);
+  if (unpublishSlugMatch && req.method === "POST") {
+    const id = unpublishSlugMatch[1];
+    const found = loadTipAnyRegion(id);
+    if (!found) return json(res, 404, { error: "not_found" });
+    if (!denyUnlessAuthorized(req, res, found.tip)) return;
+    const tip = unpublishLiveSlug(found.region, found.tip);
+    return json(res, 200, { tip, slug: null, unpublished: true });
   }
 
   // Batch/ops: set resolution (SI-owned). Requires API secret.
