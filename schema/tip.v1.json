@@ -3,7 +3,7 @@
   "$id": "https://myproblem.app/schema/tip.v1.json",
   "title": "MyProblemTicketTip",
   "type": "object",
-  "required": ["schema", "ticket_uuid", "createdAtMs", "updatedAtMs", "status", "fields", "intake", "timeline", "preserve"],
+  "required": ["schema", "ticket_uuid", "createdAtMs", "updatedAtMs", "status", "resolution", "fields", "intake", "timeline", "preserve"],
   "properties": {
     "schema": { "const": "myproblem.ticket.tip.v1" },
     "ticket_uuid": { "type": "string", "format": "uuid" },
@@ -13,6 +13,18 @@
     "createdAtMs": { "type": "integer" },
     "updatedAtMs": { "type": "integer" },
     "status": { "enum": ["open", "closed"] },
+    "resolution": {
+      "enum": ["unsolved", "solved"],
+      "description": "Problem resolution — batch SI only; live clients never set this"
+    },
+    "raiser_visitor_id": {
+      "type": ["string", "null"],
+      "description": "Visitor/device id of who raised the ticket — for rule-sheet raiser weight"
+    },
+    "live_slug": {
+      "type": ["string", "null"],
+      "description": "Short live share slug while mapped; null when permalink revoked"
+    },
     "fields": {
       "type": "object",
       "properties": {

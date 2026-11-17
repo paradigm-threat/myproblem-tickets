@@ -20,6 +20,10 @@ import {
   setJobState,
   closeTicket,
   setPreserve,
+  setTipResolution,
+  resolveLiveSlug,
+  setLiveSlug,
+  listLiveSlugKeys,
   scanQueuedJobs,
   trimHistory,
   savePublicPost,
@@ -27,6 +31,8 @@ import {
   listPublicPosts,
   removePublicPost,
 } from "../lib/gitTipStore.mjs";
+import { suggestPublicSlug } from "../lib/suggestSlug.mjs";
+import { bunnyExpireTicketMedia } from "../lib/bunnyMedia.mjs";
 import { scrubTipPii, convertPii } from "../lib/piiConvert.mjs";
 import { authorizeTicket } from "../lib/ticketAuth.mjs";
 import { classifyAsrAttempt } from "../lib/asrAttempt.mjs";
@@ -217,13 +223,77 @@ async function handle(req, res) {
     const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     const region = parseRegion(body.region || req.headers["x-region"]);
     if (!region) return json(res, 400, { error: "invalid_region", regions: REGIONS });
-    const tip = createTicket(region);
+    const raiser =
+      (typeof body.raiser_visitor_id === "string" && body.raiser_visitor_id.trim()) ||
+      (typeof req.headers["x-visitor-id"] === "string" && req.headers["x-visitor-id"].trim()) ||
+      null;
+    const tip = createTicket(region, { raiser_visitor_id: raiser });
     return json(res, 200, {
       ticket_uuid: tip.ticket_uuid,
       claim: tip.claim,
+      slug: tip.live_slug,
       region,
       tip,
     });
+  }
+
+  // Single-slug resolve only — never bulk map. Repo map stays private.
+  const slugMatch = path.match(/^\/api\/slugs\/([^/]+)$/);
+  if (slugMatch && req.method === "GET") {
+    const resolved = resolveLiveSlug(decodeURIComponent(slugMatch[1]));
+    if (!resolved) return json(res, 404, { error: "not_found" });
+    const tip = loadTip(resolved.region, resolved.ticket_uuid);
+    if (!tip || tip.status === "closed") return json(res, 404, { error: "not_found" });
+    const { claim: _claim, ...publicTip } = tip;
+    return json(res, 200, {
+      slug: resolved.slug,
+      region: resolved.region,
+      tip: publicTip,
+    });
+  }
+
+  // SI suggests topical public slug after context is clear (human may edit + apply).
+  const suggestSlugMatch = path.match(/^\/api\/tickets\/([^/]+)\/suggest-slug$/);
+  if (suggestSlugMatch && req.method === "POST") {
+    const id = suggestSlugMatch[1];
+    const found = loadTipAnyRegion(id);
+    if (!found) return json(res, 404, { error: "not_found" });
+    if (!denyUnlessAuthorized(req, res, found.tip)) return;
+    const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    const suggestion = suggestPublicSlug({
+      title: body.title || found.tip.fields?.title?.value,
+      description: body.description || found.tip.fields?.description?.value,
+      topicHint: body.topicHint || "",
+      existingSlugs: listLiveSlugKeys(),
+    });
+    if (body.apply === true) {
+      const preferred = body.slug || suggestion.suggested;
+      const tip = setLiveSlug(found.region, found.tip, preferred);
+      return json(res, 200, { suggestion, tip, slug: tip.live_slug, applied: true });
+    }
+    return json(res, 200, { suggestion, slug: found.tip.live_slug || null, applied: false });
+  }
+
+  // Batch/ops: set resolution (SI-owned). Requires API secret.
+  const resolutionMatch = path.match(/^\/api\/tickets\/([^/]+)\/resolution$/);
+  if (resolutionMatch && req.method === "POST") {
+    if (!hasApiSecret(req)) return json(res, 401, { error: "unauthorized" });
+    const id = resolutionMatch[1];
+    const found = loadTipAnyRegion(id);
+    if (!found) return json(res, 404, { error: "not_found" });
+    const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    if (body.resolution !== "solved" && body.resolution !== "unsolved") {
+      return json(res, 400, { error: "invalid_resolution" });
+    }
+    const tip = setTipResolution(found.region, id, body.resolution);
+    if (body.resolution === "solved") {
+      try {
+        await bunnyExpireTicketMedia(tip || found.tip);
+      } catch {
+        /* best-effort expire */
+      }
+    }
+    return json(res, 200, { tip, slug_dropped: body.resolution === "solved" });
   }
 
   const tipMatch = path.match(/^\/api\/tickets\/([^/]+)$/);
@@ -292,6 +362,10 @@ async function handle(req, res) {
 
     if (req.method === "PATCH") {
       const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      // resolution is batch/SI-only — never accept from clients here
+      if (body.resolution != null) {
+        return json(res, 403, { error: "resolution_batch_only" });
+      }
       if (typeof body.title === "string" && body.title.trim()) {
         tip.fields.title = {
           value: convertPii(body.title.trim()).text,

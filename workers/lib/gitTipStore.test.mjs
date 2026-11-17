@@ -5,6 +5,8 @@ import {
   loadTip,
   closeTicket,
   setPreserve,
+  setTipResolution,
+  resolveLiveSlug,
   enqueueJob,
   scanQueuedJobs,
 } from "./gitTipStore.mjs";
@@ -16,9 +18,22 @@ describe("gitTipStore", () => {
     assert.ok(tip.claim && tip.claim.length >= 32);
     assert.equal(tip.preserve, false);
     assert.equal(tip.region, "georgia");
+    assert.equal(tip.resolution, "unsolved");
+    assert.ok(tip.live_slug && tip.live_slug.length >= 4);
+    const resolved = resolveLiveSlug(tip.live_slug);
+    assert.equal(resolved?.ticket_uuid, tip.ticket_uuid);
     const loaded = loadTip("georgia", tip.ticket_uuid);
     assert.equal(loaded.ticket_uuid, tip.ticket_uuid);
     assert.equal(loaded.claim, tip.claim);
+  });
+
+  it("drops live slug when SI marks solved", () => {
+    const tip = createTicket("georgia");
+    const slug = tip.live_slug;
+    setTipResolution("georgia", tip.ticket_uuid, "solved");
+    assert.equal(resolveLiveSlug(slug), null);
+    assert.equal(loadTip("georgia", tip.ticket_uuid)?.resolution, "solved");
+    assert.equal(loadTip("georgia", tip.ticket_uuid)?.live_slug, null);
   });
 
   it("purge-on-close unless preserve", () => {

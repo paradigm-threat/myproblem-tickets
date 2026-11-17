@@ -333,22 +333,34 @@ export function applyBatchReview(tip, { kbHit = false } = {}) {
   return gauge;
 }
 
-/** Whitelist projection. No claim, no media URIs, PII coarsened, repair steps removed. */
+/** Whitelist projection. No claim. Only scrubbed/pilot media URIs. PII coarsened; repair steps removed. */
 export function toPublicPost(tip) {
   const title = stripProcedural(convertPii(tip?.fields?.title?.value || "").text);
   const description = stripProcedural(convertPii(tip?.fields?.description?.value || "").text);
+  const media = (tip.evidence || [])
+    .filter(
+      (e) =>
+        e.kind === "still" &&
+        e.uri &&
+        (e.scrubbed === true ||
+          String(e.uri).includes("b-cdn.net") ||
+          String(e.uri).startsWith("/pilot/")),
+    )
+    .map((e) => ({ id: e.id, uri: e.uri }));
   return {
     schema: "myproblem.public.post.v1",
     ticket_uuid: tip.ticket_uuid,
     region: tip.region,
+    slug: tip.live_slug || null,
     title,
     description,
+    media,
     confidence: {
       understanding: tip.confidence?.understanding ?? null,
       solution: tip.confidence?.solution ?? null,
       phase: "human",
     },
-    note: "A person should continue this investigation. MyProblem was not confident advising further. Contact details are not on this post.",
+    note: "A person should continue this investigation. MyProblem was not confident advising further. Contact details are not on this post. All tickets are anonymized but may be used to train the SI (Super Intelligence, i.e. AI).",
     publishedAtMs: Date.now(),
   };
 }
