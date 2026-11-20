@@ -1,0 +1,20 @@
+{
+  "schema": "myproblem.forum-platforms.v1",
+  "platforms": {
+    "nd": {
+      "site": "nextdoor",
+      "tag_post": "[[nd:{group}/{post}]]",
+      "tag_group": "[[ndg:{group}]]",
+      "tag_regex": "\\[\\[(ndg?):([^\\]]+)\\]\\]",
+      "group_url": "https://nextdoor.com/g/{group}/",
+      "post_url": "https://nextdoor.com/p/{post}",
+      "group_id_pattern": "^[A-Za-z0-9]+$",
+      "post_id_pattern": "^[A-Za-z0-9_-]+$",
+      "ui": {
+        "display": "link_icon",
+        "hide_raw_tag": true
+      },
+      "notes": "Per-repo meaning only (like Bunny upload-source). Not a Relay-global UUID. Parse [[nd:group/post]]: group is before first /, post is the remainder (may contain -/_). Strip query junk from URLs. Do not commit post id catalogs."
+    }
+  }
+}

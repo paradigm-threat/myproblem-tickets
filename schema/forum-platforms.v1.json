@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "myproblem.forum-platforms.v1",
+  "title": "Forum platform identifier rules (per tip repo)",
+  "type": "object",
+  "required": ["schema", "platforms"],
+  "properties": {
+    "schema": { "const": "myproblem.forum-platforms.v1" },
+    "irc_channel": {
+      "type": "string",
+      "description": "Craft IRC channel for this repo/collection (e.g. #ga-savannah-cat-rescue)"
+    },
+    "ws_topic": {
+      "type": "string",
+      "description": "Clevertree WS topic slug (e.g. ga-savannah-cat-rescue)"
+    },
+    "collection": {
+      "type": "string",
+      "description": "Optional forum collection id (e.g. savannah-cat-rescue)"
+    },
+    "enabled": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Platform keys from defaults to enable (e.g. nd)"
+    },
+    "platforms": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["site", "tag_post", "group_url", "post_url"],
+        "properties": {
+          "site": { "type": "string" },
+          "tag_post": { "type": "string" },
+          "tag_group": { "type": "string" },
+          "tag_regex": { "type": "string" },
+          "group_url": { "type": "string" },
+          "post_url": { "type": "string" },
+          "group_id_pattern": { "type": "string" },
+          "post_id_pattern": { "type": "string" },
+          "ui": { "type": "object" },
+          "notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}
