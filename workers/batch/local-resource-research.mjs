@@ -6,6 +6,9 @@
  * - Cache short helper briefs + live URLs in georgia (place) or fixit (craft) KB.
  * - No boosting / paid ranking of contractors.
  * - Forums: cite thread URLs; do not scrape full threads into the KB.
+ * - Session-locked social *group* feeds (e.g. Nextdoor groups): do NOT headless-login
+ *   scrape. Use MyProblem X (human browse) / scrubbed capture batches — see
+ *   myproblem docs/social-group-monitor.md and docs/capture-extension.md.
  *
  * Usage (when wired):
  *   node workers/batch/local-resource-research.mjs --region georgia --uuid <ticket>
@@ -18,6 +21,7 @@ When tip has coarse place and a solution route like hire-electrician:
 3. Cite live URLs only — do not freeze-frame pages or dump forum threads.
 4. Record honest Limits when a site blocks automation.
 5. Never boost or rank shops for pay.
+6. Nextdoor/Facebook *group* content: not unrestricted scrape — extension/session path only.
 `.trim();
 
 export function planLocalResourceQueries(tip) {

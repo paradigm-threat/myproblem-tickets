@@ -152,7 +152,7 @@ function denyUnlessAuthorized(req, res, tip) {
 
 const MAX_BODY_BYTES = Number(process.env.INTAKE_MAX_BODY_BYTES || 8 * 1024 * 1024);
 
-function readBody(req) {
+function readBody(req, maxBytes = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -160,7 +160,7 @@ function readBody(req) {
     req.on("data", (c) => {
       if (failed) return;
       size += c.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         failed = true;
         const err = new Error("body_too_large");
         err.code = "body_too_large";
@@ -581,12 +581,15 @@ async function handle(req, res) {
     if (!denyUnlessAuthorized(req, res, found.tip)) return;
     let { tip, region } = found;
     const ct = req.headers["content-type"] || "";
-    const raw = await readBody(req);
+    const raw = await readBody(req, 32 * 1024 * 1024);
     if (!ct.includes("application/json")) {
       return json(res, 400, { error: "expected_json_base64" });
     }
     const body = JSON.parse(raw.toString("utf8") || "{}");
-    if (body.kind === "video") return json(res, 400, { error: "video_rejected" });
+    // Live capture and web submit omit lane. Only a video message may upload a file.
+    if (body.kind === "video" && body.lane !== "batch") {
+      return json(res, 400, { error: "video_rejected" });
+    }
     const buf = Buffer.from(body.base64 || "", "base64");
     const evidenceId = randomUUID();
     const hash = createHash("sha256").update(buf).digest("hex");
@@ -664,6 +667,38 @@ async function handle(req, res) {
       scheduleDrain();
       return json(res, 200, { ok: true, evidenceId, tip });
     }
+
+    if (body.kind === "video") {
+      // Private inbox only. Not a public CDN object, and not a live vision job.
+      if (buf.length > 20 * 1024 * 1024) return json(res, 413, { error: "video_too_large" });
+      const { uri } = cacheWrite(id, evidenceId, buf, ".mp4");
+      tip.evidence.push({
+        id: evidenceId,
+        kind: "video",
+        uri,
+        sha256: hash,
+        atMs: Date.now(),
+        processed: false,
+        scrubbed: false,
+        scrubbed_locally: false,
+        lane: "batch",
+        choice: false,
+      });
+      tip.timeline.push({
+        id: randomUUID(),
+        kind: "user_video",
+        body: "Video message cached for Batch. Not public. Deleted after the batch decides.",
+        atMs: Date.now(),
+      });
+      tip.intake = "queued";
+      if (!String(tip.coachLine || "").startsWith("Safety warning")) {
+        tip.coachLine =
+          "The batch will watch this recording, remove private details, and only then decide whether to open a ticket. The video is not kept.";
+      }
+      enqueueJob(region, tip, "media", { evidenceId, reason: "video-message" });
+      tip = loadTip(region, id);
+      return json(res, 200, { ok: true, evidenceId, tip });
+    }
     return json(res, 400, { error: "unknown_kind" });
   }
 
@@ -688,7 +723,7 @@ async function handle(req, res) {
     if (!hasOpsSecret(req) && process.env.OPS_WAKE_SECRET) {
       return json(res, 401, { error: "unauthorized" });
     }
-    const queued = scanQueuedJobs(Number(url.searchParams.get("limit") || 10));
+    const queued = scanQueuedJobs(Number(url.searchParams.get("limit") || 10), ["media"]);
     const rank = { asr: 0, vision: 1, project: 2, intake: 3 };
     queued.sort((a, b) => (rank[a.bin] ?? 9) - (rank[b.bin] ?? 9));
     const results = [];
@@ -706,6 +741,10 @@ async function handle(req, res) {
           saveTip(job.region, tip, "vision-hold");
         }
         results.push({ id: job.id, deferred: "wait_for_speech" });
+        continue;
+      }
+      if (job.bin === "media") {
+        results.push({ id: job.id, deferred: "batch_video_inbox" });
         continue;
       }
       const evidenceId = job.payload?.evidenceId;

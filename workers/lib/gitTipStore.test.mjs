@@ -62,4 +62,16 @@ describe("gitTipStore", () => {
     const queued = scanQueuedJobs(100);
     assert.ok(queued.some((j) => j.ticket_uuid === tip.ticket_uuid && j.bin === "asr"));
   });
+
+  it("keeps a video inbox job queued and lets the live drain skip it", () => {
+    const tip = createTicket("georgia");
+    enqueueJob("georgia", tip, "media", { evidenceId: "vid", reason: "video-message" });
+    const all = scanQueuedJobs(100);
+    assert.ok(all.some((j) => j.ticket_uuid === tip.ticket_uuid && j.bin === "media"));
+    const live = scanQueuedJobs(100, ["media"]);
+    assert.equal(
+      live.some((j) => j.ticket_uuid === tip.ticket_uuid && j.bin === "media"),
+      false,
+    );
+  });
 });

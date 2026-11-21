@@ -359,8 +359,9 @@ export function setJobState(region, tip, jobId, state) {
 }
 
 /** Ops-only: scan worktree for queued jobs (never exposed as HTTP list). */
-export function scanQueuedJobs(limit = 50) {
+export function scanQueuedJobs(limit = 50, skipBins = []) {
   const out = [];
+  const skip = new Set(skipBins);
   for (const region of REGIONS) {
     const ticketsDir = join(regionRoot(region), "tickets");
     if (!existsSync(ticketsDir)) continue;
@@ -371,6 +372,7 @@ export function scanQueuedJobs(limit = 50) {
         if (!f.endsWith(".json")) continue;
         const job = JSON.parse(readFileSync(join(jobsDir, f), "utf8"));
         if (job.state !== "queued") continue;
+        if (skip.has(job.bin)) continue;
         out.push({ region, ticket_uuid: uuid, ...job });
         if (out.length >= limit) return out;
       }
