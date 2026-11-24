@@ -4,10 +4,23 @@ import { shouldWakeBatch } from "./wake-batch.mjs";
 
 describe("shouldWakeBatch", () => {
   it("wakes on asr depth", () => {
-    const d = shouldWakeBatch({ asr: 1, vision: 0, project: 0 }, 0, {
+    const d = shouldWakeBatch({ asr: 1, vision: 0, project: 0, media: 0 }, 0, {
       asrMin: 1,
       visionMin: 1,
       projectMin: 1,
+      mediaMin: 1,
+      maxAgeHours: 24,
+    });
+    assert.equal(d.wake, true);
+    assert.equal(d.reason, "depth");
+  });
+
+  it("wakes on media inbox depth", () => {
+    const d = shouldWakeBatch({ asr: 0, vision: 0, project: 0, media: 1 }, 0, {
+      asrMin: 1,
+      visionMin: 1,
+      projectMin: 1,
+      mediaMin: 1,
       maxAgeHours: 24,
     });
     assert.equal(d.wake, true);
@@ -15,10 +28,11 @@ describe("shouldWakeBatch", () => {
   });
 
   it("wakes on age when any GPU bin pending", () => {
-    const d = shouldWakeBatch({ asr: 1, vision: 0, project: 0 }, 30, {
+    const d = shouldWakeBatch({ asr: 1, vision: 0, project: 0, media: 0 }, 30, {
       asrMin: 99,
       visionMin: 99,
       projectMin: 99,
+      mediaMin: 99,
       maxAgeHours: 24,
     });
     assert.equal(d.wake, true);
@@ -26,10 +40,11 @@ describe("shouldWakeBatch", () => {
   });
 
   it("stays quiet", () => {
-    const d = shouldWakeBatch({ asr: 0, vision: 0, project: 0 }, 0, {
+    const d = shouldWakeBatch({ asr: 0, vision: 0, project: 0, media: 0 }, 0, {
       asrMin: 1,
       visionMin: 1,
       projectMin: 1,
+      mediaMin: 1,
       maxAgeHours: 24,
     });
     assert.equal(d.wake, false);

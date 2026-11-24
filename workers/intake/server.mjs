@@ -13,10 +13,13 @@ import { evaluateWake } from "./wake-batch.mjs";
 import {
   REGIONS,
   createTicket,
+  lookupTicketIdempotency,
   loadTip,
   loadTipAnyRegion,
   saveTip,
   enqueueJob,
+  ensureQueuedJob,
+  refreshBatchQueue,
   setJobState,
   closeTicket,
   setPreserve,
@@ -33,7 +36,12 @@ import {
   removePublicPost,
 } from "../lib/gitTipStore.mjs";
 import { suggestPublicSlug } from "../lib/suggestSlug.mjs";
-import { bunnyExpireTicketMedia, finalizeChoiceStills } from "../lib/bunnyMedia.mjs";
+import {
+  bunnyConfigured,
+  bunnyExpireTicketMedia,
+  bunnyUploadInbox,
+  finalizeChoiceStills,
+} from "../lib/bunnyMedia.mjs";
 import { scrubTipPii, convertPii } from "../lib/piiConvert.mjs";
 import { authorizeTicket } from "../lib/ticketAuth.mjs";
 import { classifyAsrAttempt } from "../lib/asrAttempt.mjs";
@@ -230,7 +238,33 @@ async function handle(req, res) {
       null;
     // mint_slug defaults true (APK). Web submit sends mint_slug: false.
     const mint_slug = body.mint_slug !== false;
-    const tip = createTicket(region, { raiser_visitor_id: raiser, mint_slug });
+    const idempotency_key =
+      (typeof req.headers["idempotency-key"] === "string" &&
+        req.headers["idempotency-key"].trim()) ||
+      (typeof body.client_submission_id === "string" &&
+        body.client_submission_id.trim()) ||
+      null;
+    if (idempotency_key) {
+      const existingId = lookupTicketIdempotency(region, idempotency_key);
+      if (existingId) {
+        const tip = loadTip(region, existingId);
+        if (tip) {
+          return json(res, 200, {
+            ticket_uuid: tip.ticket_uuid,
+            claim: tip.claim,
+            slug: tip.live_slug || null,
+            region,
+            tip,
+            idempotent_replay: true,
+          });
+        }
+      }
+    }
+    const tip = createTicket(region, {
+      raiser_visitor_id: raiser,
+      mint_slug,
+      idempotency_key,
+    });
     return json(res, 200, {
       ticket_uuid: tip.ticket_uuid,
       claim: tip.claim,
@@ -358,7 +392,7 @@ async function handle(req, res) {
     const id = tipMatch[1];
     const found = loadTipAnyRegion(id);
     if (!found) return json(res, 404, { error: "not_found" });
-    const { tip, region } = found;
+    let { tip, region } = found;
     if (!denyUnlessAuthorized(req, res, tip)) return;
 
     if (req.method === "GET") {
@@ -444,13 +478,22 @@ async function handle(req, res) {
         body: "Title/description locked by you",
         atMs: Date.now(),
       });
-      tip.intake = "figuring_out";
-      tip.coachLine = "Figuring out…";
+      tip.intake = "queued";
+      if (!String(tip.coachLine || "").startsWith("Safety warning")) {
+        tip.coachLine = "Queued for Batch — text is on the tip for the investigation.";
+      }
       applySafetyRestraint(tip);
       applyConfidence(tip);
       if (tip.confidence?.public !== true) removePublicPost(region, tip.ticket_uuid);
       scrubTipPii(tip);
-      saveTip(region, tip, "user-lock");
+      ensureQueuedJob(region, tip, "project", {
+        reason: "user-text",
+        title: tip.fields?.title?.value || "",
+      });
+      tip = loadTip(region, id);
+      refreshBatchQueue(tip);
+      saveTip(region, tip, "batch-queue-text");
+      tip = loadTip(region, id);
       return json(res, 200, tip);
     }
   }
@@ -672,7 +715,7 @@ async function handle(req, res) {
       // Private inbox only. Not a public CDN object, and not a live vision job.
       if (buf.length > 20 * 1024 * 1024) return json(res, 413, { error: "video_too_large" });
       const { uri } = cacheWrite(id, evidenceId, buf, ".mp4");
-      tip.evidence.push({
+      const evidence = {
         id: evidenceId,
         kind: "video",
         uri,
@@ -683,11 +726,31 @@ async function handle(req, res) {
         scrubbed_locally: false,
         lane: "batch",
         choice: false,
-      });
+        inbox_uri: null,
+        bunnyPath: null,
+      };
+      // Durable private copy for Batch (cache is emptyDir). App never holds the Bunny key.
+      if (bunnyConfigured(region)) {
+        const up = await bunnyUploadInbox(region, id, evidenceId, buf, "mp4", "video/mp4");
+        if (up.ok) {
+          evidence.inbox_uri = up.uri;
+          evidence.bunnyPath = up.path;
+        } else {
+          tip.timeline.push({
+            id: randomUUID(),
+            kind: "system",
+            body: `Bunny inbox upload deferred: ${up.error || "unknown"}`,
+            atMs: Date.now(),
+          });
+        }
+      }
+      tip.evidence.push(evidence);
       tip.timeline.push({
         id: randomUUID(),
         kind: "user_video",
-        body: "Video message cached for Batch. Not public. Deleted after the batch decides.",
+        body: evidence.inbox_uri
+          ? "Video message in private Bunny inbox + cache for Batch. Not public."
+          : "Video message cached for Batch. Not public. Deleted after the batch decides.",
         atMs: Date.now(),
       });
       tip.intake = "queued";
@@ -695,7 +758,22 @@ async function handle(req, res) {
         tip.coachLine =
           "The batch will watch this recording, remove private details, and only then decide whether to open a ticket. The video is not kept.";
       }
-      enqueueJob(region, tip, "media", { evidenceId, reason: "video-message" });
+      refreshBatchQueue(tip);
+      enqueueJob(region, tip, "media", {
+        evidenceId,
+        reason: "video-message",
+        inbox_uri: evidence.inbox_uri,
+        bunnyPath: evidence.bunnyPath,
+        cache_uri: uri,
+      });
+      tip = loadTip(region, id);
+      ensureQueuedJob(region, tip, "project", {
+        reason: "video-message",
+        evidenceId,
+      });
+      tip = loadTip(region, id);
+      refreshBatchQueue(tip);
+      saveTip(region, tip, "batch-queue-snapshot");
       tip = loadTip(region, id);
       return json(res, 200, { ok: true, evidenceId, tip });
     }
@@ -723,7 +801,11 @@ async function handle(req, res) {
     if (!hasOpsSecret(req) && process.env.OPS_WAKE_SECRET) {
       return json(res, 401, { error: "unauthorized" });
     }
-    const queued = scanQueuedJobs(Number(url.searchParams.get("limit") || 10), ["media"]);
+    // media + project stay queued for Batch; live drain only runs asr/vision/intake.
+    const queued = scanQueuedJobs(Number(url.searchParams.get("limit") || 10), [
+      "media",
+      "project",
+    ]);
     const rank = { asr: 0, vision: 1, project: 2, intake: 3 };
     queued.sort((a, b) => (rank[a.bin] ?? 9) - (rank[b.bin] ?? 9));
     const results = [];
@@ -745,6 +827,10 @@ async function handle(req, res) {
       }
       if (job.bin === "media") {
         results.push({ id: job.id, deferred: "batch_video_inbox" });
+        continue;
+      }
+      if (job.bin === "project") {
+        results.push({ id: job.id, deferred: "batch_project" });
         continue;
       }
       const evidenceId = job.payload?.evidenceId;

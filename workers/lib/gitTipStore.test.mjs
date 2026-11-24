@@ -8,7 +8,12 @@ import {
   setTipResolution,
   resolveLiveSlug,
   enqueueJob,
+  ensureQueuedJob,
+  refreshBatchQueue,
   scanQueuedJobs,
+  countQueuedByBin,
+  lookupTicketIdempotency,
+  rememberTicketIdempotency,
 } from "./gitTipStore.mjs";
 
 describe("gitTipStore", () => {
@@ -66,12 +71,56 @@ describe("gitTipStore", () => {
   it("keeps a video inbox job queued and lets the live drain skip it", () => {
     const tip = createTicket("georgia");
     enqueueJob("georgia", tip, "media", { evidenceId: "vid", reason: "video-message" });
+    ensureQueuedJob("georgia", tip, "project", { reason: "user-text" });
     const all = scanQueuedJobs(100);
     assert.ok(all.some((j) => j.ticket_uuid === tip.ticket_uuid && j.bin === "media"));
-    const live = scanQueuedJobs(100, ["media"]);
+    assert.ok(all.some((j) => j.ticket_uuid === tip.ticket_uuid && j.bin === "project"));
+    const live = scanQueuedJobs(100, ["media", "project"]);
     assert.equal(
       live.some((j) => j.ticket_uuid === tip.ticket_uuid && j.bin === "media"),
       false,
     );
+    assert.equal(
+      live.some((j) => j.ticket_uuid === tip.ticket_uuid && j.bin === "project"),
+      false,
+    );
+    const counts = countQueuedByBin();
+    assert.ok(counts.media >= 1);
+    assert.ok(counts.project >= 1);
+  });
+
+  it("snapshots text and inbox media links for the batch queue", () => {
+    const tip = createTicket("georgia");
+    tip.fields.title = { value: "Flat tire", source: "user", locked: true };
+    tip.fields.description = { value: "Passenger side", source: "user", locked: true };
+    tip.evidence.push({
+      id: "vid1",
+      kind: "video",
+      uri: "cache://x.mp4",
+      inbox_uri: "https://storage.bunnycdn.com/zone/georgia/inbox/tickets/x/vid1.mp4",
+      bunnyPath: "georgia/inbox/tickets/x/vid1.mp4",
+      lane: "batch",
+    });
+    ensureQueuedJob("georgia", tip, "project", { reason: "user-text" });
+    const loaded = loadTip("georgia", tip.ticket_uuid);
+    refreshBatchQueue(loaded);
+    assert.equal(loaded.batch_queue.text.title, "Flat tire");
+    assert.equal(loaded.batch_queue.assets[0].inbox_uri.includes("/inbox/"), true);
+    assert.ok(loaded.batch_queue.jobs.some((j) => j.bin === "project"));
+  });
+
+  it("remembers Idempotency-Key → ticket uuid for create replay", () => {
+    const key = `client-sub-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    assert.equal(lookupTicketIdempotency("georgia", key), null);
+    const tip = createTicket("georgia", {
+      mint_slug: false,
+      idempotency_key: key,
+    });
+    assert.equal(lookupTicketIdempotency("georgia", key), tip.ticket_uuid);
+    // Same key must not mint a second tip when callers look up first.
+    rememberTicketIdempotency("georgia", key, tip.ticket_uuid);
+    assert.equal(lookupTicketIdempotency("georgia", key), tip.ticket_uuid);
+    assert.equal(lookupTicketIdempotency("georgia", "  " + key + "  "), tip.ticket_uuid);
+    assert.equal(lookupTicketIdempotency("georgia", ""), null);
   });
 });

@@ -11,7 +11,14 @@
 ## ConfigMap bring-up
 
 ```bash
-export KUBECONFIG=~/.kube/config   # paradigmthreat-myproblem-intake
+export KUBECONFIG=~/.kube/myproblem-intake.yaml
+bash scripts/deploy-intake.sh
+```
+
+Manual equivalent:
+
+```bash
+export KUBECONFIG=~/.kube/myproblem-intake.yaml
 kubectl -n myproblem create configmap intake-code \
   --from-file=server.mjs=workers/intake/server.mjs \
   --from-file=wake-batch.mjs=workers/intake/wake-batch.mjs \
@@ -26,14 +33,13 @@ kubectl -n myproblem create configmap intake-code \
   --from-file=confidenceGauge.mjs=workers/lib/confidenceGauge.mjs \
   --from-file=package.json=<(echo '{"type":"module","dependencies":{}}') \
   --dry-run=client -o yaml | kubectl apply -f -
-# Also mount regions/ or sync via git clone in the pod (preferred long-term)
 kubectl apply -f infra/k8s/intake-bringup.yaml
 kubectl -n myproblem rollout restart deployment/intake
 ```
 
 **Persistence:** tip git lives on hostPath `/var/lib/myproblem-intake/regions` (survives Recreate). Cache stays `emptyDir`. ConfigMap must include `ticketAuth.mjs`, `asrAttempt.mjs`, `visionAttempt.mjs`, and `bunnyMedia.mjs`. Each tip repo carries `media-upload.json` (shared Bunny zone + `path_prefix`); sync georgia/israel (and fixit stub when minted) onto the hostPath.
 
-Secrets: `TICKETS_API_SECRET`, `OPS_WAKE_SECRET`, `REQUIRE_TICKET_CLAIM`. Optional `GROQ_API_KEY` enables Whisper and rapid still analysis. **Ops note (2026-11-24):** `kubectl` shows `myproblem/intake-secrets` has GROQ/OPS/CLAIM/TICKETS keys but **no** `BUNNY_STORAGE_API_KEY`, so video evidence stays on `cache://` only (`bunnyPath`/`inbox_uri` null). Add the **myproblem-stills** storage zone password to that secret and restart the intake pod to enable private Bunny inbox + choice-media CDN. Optional `BUNNY_STORAGE_API_KEY` enables Batch `POST /api/tickets/:id/choice-media` CDN links (zone/CDN/prefix from repo `media-upload.json` — never put the key in tip git). Evidence POST never uploads to Bunny; only choice-media does. Intake drains its own queue after an upload (`POST /api/ops/process-jobs` remains for ops). Speech is processed before stills. Still cache URIs are kept until choice-media; unused stills are deleted there. Without Groq, ASR and vision jobs dry-run and do **not** rename the ticket. Vision model defaults to `qwen/qwen3.8-27b` (`GROQ_VISION_MODEL`). Hazardous problems get a safety warning (`safetyRestraint.mjs`). `confidenceGauge.mjs` scores understanding, then solution confidence. `POST /api/tickets/:id/batch-review` is the batch pass; if unsure, a redacted post is public and a person should continue.
+Secrets: `TICKETS_API_SECRET`, `OPS_WAKE_SECRET`, `REQUIRE_TICKET_CLAIM`. Optional `GROQ_API_KEY` enables Whisper and rapid still analysis. `BUNNY_STORAGE_API_KEY` (myproblem-stills storage-zone password) enables (1) private Bunny **inbox** for `kind: video` + `lane: batch` evidence (`inbox_uri` / `bunnyPath` on the tip + `batch_queue.assets`) and (2) Batch `POST /api/tickets/:id/choice-media` public CDN stills (zone/CDN/prefix from repo `media-upload.json` — never put the key in tip git or the APK). Stills on the live path stay cache-only until choice-media; video messages upload to the private inbox on Intake (server-only). Rebuild `intake-secrets` with `kubectl create secret … --dry-run=client -o yaml | kubectl apply -f -` so values are not stored in `last-applied-configuration`. Intake drains its own queue after an upload (`POST /api/ops/process-jobs` remains for ops). Speech is processed before stills. Unused stills and inbox objects are deleted at choice finalize / expire. Without Groq, ASR and vision jobs dry-run and do **not** rename the ticket. Vision model defaults to `qwen/qwen3.8-27b` (`GROQ_VISION_MODEL`). Hazardous problems get a safety warning (`safetyRestraint.mjs`). `confidenceGauge.mjs` scores understanding, then solution confidence. `POST /api/tickets/:id/batch-review` is the batch pass; if unsure, a redacted post is public and a person should continue.
 
 ## Retention
 

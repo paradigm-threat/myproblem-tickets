@@ -14,20 +14,24 @@ function loadThresholds() {
     asrMin: Number(process.env.WAKE_ASR_MIN || 1),
     visionMin: Number(process.env.WAKE_VISION_MIN || 1),
     projectMin: Number(process.env.WAKE_PROJECT_MIN || 1),
+    mediaMin: Number(process.env.WAKE_MEDIA_MIN || 1),
     maxAgeHours: Number(process.env.WAKE_MAX_AGE_HOURS || 24),
   };
 }
 
 /** Pure decision helper — unit-testable without Spot. */
 export function shouldWakeBatch(counts, oldestAgeHours, thr = loadThresholds()) {
-  if (counts.asr >= thr.asrMin || counts.vision >= thr.visionMin || counts.project >= thr.projectMin) {
+  if (
+    counts.asr >= thr.asrMin ||
+    counts.vision >= thr.visionMin ||
+    counts.project >= thr.projectMin ||
+    (counts.media || 0) >= thr.mediaMin
+  ) {
     return { wake: true, reason: "depth" };
   }
-  if (
-    oldestAgeHours != null &&
-    oldestAgeHours >= thr.maxAgeHours &&
-    counts.asr + counts.vision + counts.project > 0
-  ) {
+  const depth =
+    (counts.asr || 0) + (counts.vision || 0) + (counts.project || 0) + (counts.media || 0);
+  if (oldestAgeHours != null && oldestAgeHours >= thr.maxAgeHours && depth > 0) {
     return { wake: true, reason: "age" };
   }
   return { wake: false, reason: "quiet" };

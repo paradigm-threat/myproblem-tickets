@@ -13,12 +13,12 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "../..");
-const REGIONS_ROOT = process.env.TICKETS_REGIONS_ROOT || join(ROOT, "regions");
 
 /** Repos that may declare a media-upload.json (tip homes + fixit stub). */
 export const MEDIA_REPO_KEYS = ["georgia", "israel", "fixit"];
 
 const KEY = () => process.env.BUNNY_STORAGE_API_KEY?.trim() || "";
+const regionsRoot = () => process.env.TICKETS_REGIONS_ROOT || join(ROOT, "regions");
 
 /**
  * Load per-repo upload destination. Secrets never come from the file.
@@ -29,7 +29,7 @@ export function loadMediaUploadConfig(repoKey) {
   if (!MEDIA_REPO_KEYS.includes(key)) {
     return { ok: false, error: `unknown_media_repo:${key}` };
   }
-  const path = join(REGIONS_ROOT, key, "media-upload.json");
+  const path = join(regionsRoot(), key, "media-upload.json");
   let file = {};
   if (existsSync(path)) {
     try {
@@ -80,38 +80,34 @@ function objectPath(cfg, ticketUuid, evidenceId) {
   return `${cfg.path_prefix}/tickets/${ticketUuid}/${evidenceId}.jpg`;
 }
 
-/**
- * Upload scrubbed JPEG bytes using the tip repo’s destination.
- * @returns {{ ok: true, path: string, uri: string } | { ok: false, error: string, detail?: string }}
- */
-export async function bunnyUploadStill(repoKey, ticketUuid, evidenceId, jpegBytes) {
-  const cfg = loadMediaUploadConfig(repoKey);
-  if (!cfg.ok) return { ok: false, error: cfg.error };
-  if (!KEY()) return { ok: false, error: "bunny_not_configured" };
+/** Private batch inbox — not a public CDN object. */
+function inboxObjectPath(cfg, ticketUuid, evidenceId, ext) {
+  const safe = String(ext || "bin").replace(/^\./, "").replace(/[^a-zA-Z0-9]+/g, "") || "bin";
+  return `${cfg.path_prefix}/inbox/tickets/${ticketUuid}/${evidenceId}.${safe}`;
+}
 
-  const path = objectPath(cfg, ticketUuid, evidenceId);
+async function bunnyPut(cfg, path, bytes, contentType) {
   const url = `https://${cfg.storage_host}/${cfg.storage_zone}/${path}`;
   const res = await fetch(url, {
     method: "PUT",
     headers: {
       AccessKey: KEY(),
-      "Content-Type": "image/jpeg",
+      "Content-Type": contentType || "application/octet-stream",
     },
-    body: jpegBytes,
+    body: bytes,
   });
   if (!res.ok) {
     return { ok: false, error: `bunny_upload_${res.status}`, detail: await res.text() };
   }
-  return { ok: true, path, uri: `${cfg.cdn_host}/${path}` };
+  return {
+    ok: true,
+    path,
+    // Storage host URI — Batch reads with AccessKey. Not a public b-cdn link.
+    uri: `https://${cfg.storage_host}/${cfg.storage_zone}/${path}`,
+  };
 }
 
-/** Delete one still (or best-effort). */
-export async function bunnyDeleteStill(repoKey, ticketUuid, evidenceId) {
-  const cfg = loadMediaUploadConfig(repoKey);
-  if (!cfg.ok) return { ok: false, error: cfg.error };
-  if (!KEY()) return { ok: false, error: "bunny_not_configured" };
-
-  const path = objectPath(cfg, ticketUuid, evidenceId);
+async function bunnyDeletePath(cfg, path) {
   const url = `https://${cfg.storage_host}/${cfg.storage_zone}/${path}`;
   const res = await fetch(url, {
     method: "DELETE",
@@ -124,16 +120,61 @@ export async function bunnyDeleteStill(repoKey, ticketUuid, evidenceId) {
 }
 
 /**
- * Expire all Bunny stills for a tip (solved / unpublish / close).
- * Call after scrubbed public media is no longer needed.
+ * Upload scrubbed JPEG bytes using the tip repo’s destination.
+ * @returns {{ ok: true, path: string, uri: string } | { ok: false, error: string, detail?: string }}
+ */
+export async function bunnyUploadStill(repoKey, ticketUuid, evidenceId, jpegBytes) {
+  const cfg = loadMediaUploadConfig(repoKey);
+  if (!cfg.ok) return { ok: false, error: cfg.error };
+  if (!KEY()) return { ok: false, error: "bunny_not_configured" };
+
+  const path = objectPath(cfg, ticketUuid, evidenceId);
+  const up = await bunnyPut(cfg, path, jpegBytes, "image/jpeg");
+  if (!up.ok) return up;
+  return { ok: true, path: up.path, uri: `${cfg.cdn_host}/${up.path}` };
+}
+
+/**
+ * Upload raw video/audio/other into the private batch inbox (not public CDN).
+ * Tip should store inbox_uri + bunnyPath; public pages never link this URI.
+ */
+export async function bunnyUploadInbox(
+  repoKey,
+  ticketUuid,
+  evidenceId,
+  bytes,
+  ext = "bin",
+  contentType = "application/octet-stream",
+) {
+  const cfg = loadMediaUploadConfig(repoKey);
+  if (!cfg.ok) return { ok: false, error: cfg.error };
+  if (!KEY()) return { ok: false, error: "bunny_not_configured" };
+  const path = inboxObjectPath(cfg, ticketUuid, evidenceId, ext);
+  return bunnyPut(cfg, path, bytes, contentType);
+}
+
+/** Delete one still (or best-effort). */
+export async function bunnyDeleteStill(repoKey, ticketUuid, evidenceId) {
+  const cfg = loadMediaUploadConfig(repoKey);
+  if (!cfg.ok) return { ok: false, error: cfg.error };
+  if (!KEY()) return { ok: false, error: "bunny_not_configured" };
+  return bunnyDeletePath(cfg, objectPath(cfg, ticketUuid, evidenceId));
+}
+
+/**
+ * Expire Bunny stills + private inbox objects for a tip (solved / unpublish / close).
  */
 export async function bunnyExpireTicketMedia(tip) {
   const repoKey = tip?.region || tip?.home || "";
+  const cfg = loadMediaUploadConfig(repoKey);
   const results = [];
   for (const ev of tip.evidence || []) {
-    if (ev.kind !== "still") continue;
-    if (!ev.uri || !String(ev.uri).includes("b-cdn.net")) continue;
-    results.push(await bunnyDeleteStill(repoKey, tip.ticket_uuid, ev.id));
+    if (ev.kind === "still" && ev.uri && String(ev.uri).includes("b-cdn.net")) {
+      results.push(await bunnyDeleteStill(repoKey, tip.ticket_uuid, ev.id));
+    }
+    if (ev.bunnyPath && cfg.ok && KEY()) {
+      results.push(await bunnyDeletePath(cfg, ev.bunnyPath));
+    }
   }
   return results;
 }

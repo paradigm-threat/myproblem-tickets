@@ -317,6 +317,50 @@ export function saveTip(region, tip, intent = "update") {
  * Create tip. `mint_slug` defaults true (APK mint-on-create).
  * Web submit passes mint_slug: false, then opt-in via suggest-slug apply.
  */
+function idempotencyPath(region) {
+  return join(regionRoot(region), "idempotency.json");
+}
+
+function readIdempotency(region) {
+  const p = idempotencyPath(region);
+  if (!existsSync(p)) return {};
+  try {
+    return JSON.parse(readFileSync(p, "utf8")) || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeIdempotency(region, map) {
+  mkdirSync(regionRoot(region), { recursive: true });
+  writeFileSync(idempotencyPath(region), JSON.stringify(map, null, 2) + "\n");
+}
+
+/** Return existing tip uuid for a client Idempotency-Key, if any. */
+export function lookupTicketIdempotency(region, key) {
+  if (!key || typeof key !== "string") return null;
+  const k = key.trim().slice(0, 128);
+  if (!k) return null;
+  const map = readIdempotency(region);
+  const ticket_uuid = map[k];
+  return typeof ticket_uuid === "string" ? ticket_uuid : null;
+}
+
+export function rememberTicketIdempotency(region, key, ticket_uuid) {
+  if (!key || !ticket_uuid) return;
+  const k = String(key).trim().slice(0, 128);
+  if (!k) return;
+  const map = readIdempotency(region);
+  map[k] = ticket_uuid;
+  // Cap map size — drop oldest-ish by rebuilding from tip folder order is hard;
+  // keep last 2000 keys.
+  const keys = Object.keys(map);
+  if (keys.length > 2000) {
+    for (const old of keys.slice(0, keys.length - 2000)) delete map[old];
+  }
+  writeIdempotency(region, map);
+}
+
 export function createTicket(region, opts = {}) {
   const id = randomUUID();
   const mintSlug = opts.mint_slug !== false;
@@ -325,7 +369,11 @@ export function createTicket(region, opts = {}) {
     raiser_visitor_id: opts.raiser_visitor_id ?? null,
     live_slug: slug,
   });
-  return saveTip(region, tip, "create");
+  const saved = saveTip(region, tip, "create");
+  if (opts.idempotency_key) {
+    rememberTicketIdempotency(region, opts.idempotency_key, saved.ticket_uuid);
+  }
+  return saved;
 }
 
 /** Clear public live slug; tip stays private (claim still works). */
@@ -344,6 +392,41 @@ export function enqueueJob(region, tip, bin, payload = {}) {
   tip.jobs.push({ id, bin, state: "queued", payload });
   saveTip(region, tip, `enqueue-${bin}`);
   return job;
+}
+
+/** Enqueue only when no queued job of this bin already exists. */
+export function ensureQueuedJob(region, tip, bin, payload = {}) {
+  const has = (tip.jobs || []).some((j) => j.bin === bin && j.state === "queued");
+  if (has) return null;
+  return enqueueJob(region, tip, bin, payload);
+}
+
+/** Snapshot text + durable media links Batch should read. */
+export function refreshBatchQueue(tip) {
+  const assets = (tip.evidence || [])
+    .filter((e) => e && e.kind)
+    .map((e) => ({
+      id: e.id,
+      kind: e.kind,
+      lane: e.lane || null,
+      uri: e.uri || null,
+      inbox_uri: e.inbox_uri || null,
+      bunnyPath: e.bunnyPath || null,
+      sha256: e.sha256 || null,
+      scrubbed_locally: e.scrubbed_locally === true,
+    }));
+  tip.batch_queue = {
+    updatedAtMs: Date.now(),
+    text: {
+      title: tip.fields?.title?.value || "",
+      description: tip.fields?.description?.value || "",
+    },
+    assets,
+    jobs: (tip.jobs || [])
+      .filter((j) => j.state === "queued")
+      .map((j) => ({ id: j.id, bin: j.bin, payload: j.payload || {} })),
+  };
+  return tip;
 }
 
 export function setJobState(region, tip, jobId, state) {
@@ -382,7 +465,7 @@ export function scanQueuedJobs(limit = 50, skipBins = []) {
 }
 
 export function countQueuedByBin() {
-  const counts = { asr: 0, vision: 0, project: 0, intake: 0 };
+  const counts = { asr: 0, vision: 0, project: 0, intake: 0, media: 0 };
   let oldestAgeHours = 0;
   const now = Date.now();
   for (const j of scanQueuedJobs(10_000)) {

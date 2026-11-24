@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import {
   loadMediaUploadConfig,
   bunnyConfigured,
+  bunnyUploadInbox,
   finalizeChoiceStills,
   MEDIA_REPO_KEYS,
 } from "./bunnyMedia.mjs";
@@ -133,6 +134,33 @@ describe("bunnyMedia per-repo destination", () => {
       assert.equal(tip2.evidence[0].choice, true);
       assert.equal(tip2.evidence[0].scrubbed, true);
       assert.match(tip2.evidence[0].uri, /^https:\/\/myproblem-stills\.b-cdn\.net\//);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it("uploads video into the private inbox path, not the public stills path", async () => {
+    process.env.BUNNY_STORAGE_API_KEY = "test-key";
+    const origFetch = globalThis.fetch;
+    let putUrl = "";
+    globalThis.fetch = async (url) => {
+      putUrl = String(url);
+      return new Response("ok", { status: 201 });
+    };
+    try {
+      const up = await bunnyUploadInbox(
+        "georgia",
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "vid1",
+        Buffer.from("fake-mp4"),
+        "mp4",
+        "video/mp4",
+      );
+      assert.equal(up.ok, true);
+      assert.match(up.path, /\/inbox\/tickets\//);
+      assert.match(putUrl, /\/inbox\/tickets\//);
+      assert.match(up.uri, /storage\.bunnycdn\.com/);
+      assert.equal(up.uri.includes("b-cdn.net"), false);
     } finally {
       globalThis.fetch = origFetch;
     }
