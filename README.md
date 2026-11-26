@@ -16,7 +16,7 @@ Each is a Relay app (`.relay.yaml` + CleverScript hooks). **`ticket_uuid` is pri
 | Host | Role |
 |------|------|
 | **Intake** (`myproblem-intake`) | `relay-gateway` renders tip JSON/md; commit worker mutates via git |
-| **Batch** (`myproblem-batch`) | Whisper/VL; lease/done = commits in the same regional repo |
+| **Batch** | Cursor (Phase 1) or CPU + providers (Phase 2): Groq/Bedrock ASR/VL/decide; lease/done = commits in the same regional repo. **No A30 / `myproblem-batch` GPU cloudspace** |
 
 Vercel hosts marketing + APK only.
 

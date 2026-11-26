@@ -1,18 +1,19 @@
-# Intake host provision record
+# Intake host — DECOMMISSIONED
 
-| Field | Value |
+**Status:** Rackspace Spot cloudspace **`myproblem-intake`** was **deleted 2026-11-26**.
+
+Public realtime is **Linode Ergo IRC on `pub1.relaygateway.net`** (park `/chat`, Cleverchat IRC bridge). Private / capability-gated intake is a **premium** path — not hosted on Spot, and not the default public system.
+
+| Field | Former value (historical) |
 |-------|--------|
-| Cloudspace | `myproblem-intake` |
+| Cloudspace | `myproblem-intake` (gone) |
 | Org | paradigmthreat |
 | Region | `us-east-iad-1` |
-| Public ticket host | `https://intake.myproblem.app` (DNS A → Spot; Caddy LE → `:8787`) |
-| SoT | Regional git (`regions/georgia`, `regions/israel`) — **no Neon** |
-| Tip disk | hostPath `/var/lib/myproblem-intake/regions` (not emptyDir) |
-| Auth | UUID capability; `REQUIRE_TICKET_CLAIM=1` → Bearer/`x-ticket-claim` required |
-| Gateway | `relay-gateway` renders tip.json / index.md by UUID path (pending full mount) |
-| Commit worker | `workers/intake/server.mjs` (`infra/k8s/intake-bringup.yaml`) |
-| Clevertree Chat host | `python3 scripts/chat_host.py 8790` from `clevertree-chat` — `/chat`, `/api/chat`, `/api/chat/ws` (Caddy reverse-proxy; see clevertree-chat `docs/chat-host.md`) |
-| TLS | `infra/k8s/intake-caddy.yaml` — certs at hostPath `/var/lib/myproblem-caddy` |
-| Batch | Ephemeral `myproblem-batch` / A30 — wake when job files queued |
+| Public ticket host | was `https://intake.myproblem.app` → Spot; DNS now follows pub1 / park |
+| Auth | UUID capability; `REQUIRE_TICKET_CLAIM=1` |
+| Commit worker | `workers/intake/server.mjs` + `infra/k8s/intake-bringup.yaml` |
+| Clevertree Chat host | moved off Spot; see clevertree-chat `docs/irc-backbone.md` |
 
-**Privacy:** UUID capability; no list APIs; close purges unless `preserve`; history trim ~48h; PII converted before commit.
+**Do not** run `scripts/deploy-intake.sh` — it exits non-zero and refuses to recreate Spot.
+
+Local kubeconfig `~/.kube/myproblem-intake.yaml` should be removed if present.
