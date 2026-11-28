@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Batch worker stub: drain GPU bins (asr → vision → project), then self-decommission.
+ * Batch worker fixture evaluator: evaluate ASR/vision fixtures via metered providers.
  * ASR: Groq whisper-large-v3 when GROQ_API_KEY set; else dry-run.
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -108,23 +108,10 @@ async function drainLocalFixtureEval() {
   return { evaluated: results.length, results, outPath };
 }
 
-export function decommissionPlan() {
-  return {
-    cloudspace: "myproblem-batch",
-    region: "us-west-sjc-1",
-    steps: ["deleteSpotNodePool", "deleteCloudspace"],
-    script: "infra/scripts/spot-decommission-batch.sh",
-  };
-}
-
 async function main() {
   const mode = process.argv[2] || "fixtures";
   if (mode === "fixtures") {
     await drainLocalFixtureEval();
-  }
-  console.log("decommission:", JSON.stringify(decommissionPlan(), null, 2));
-  if (process.env.SPOT_TOKEN && process.env.BATCH_SELF_DELETE === "1") {
-    console.log("Run infra/scripts/spot-decommission-batch.sh to tear down.");
   }
 }
 

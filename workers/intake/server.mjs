@@ -9,7 +9,6 @@ import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
 import { mkdirSync, writeFileSync, existsSync, unlinkSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { evaluateWake } from "./wake-batch.mjs";
 import {
   REGIONS,
   createTicket,
@@ -29,6 +28,7 @@ import {
   unpublishLiveSlug,
   listLiveSlugKeys,
   scanQueuedJobs,
+  countQueuedByBin,
   trimHistory,
   savePublicPost,
   loadPublicPost,
@@ -784,8 +784,8 @@ async function handle(req, res) {
     if (!hasOpsSecret(req) && process.env.OPS_WAKE_SECRET) {
       return json(res, 401, { error: "unauthorized" });
     }
-    const decision = await evaluateWake();
-    return json(res, 200, decision);
+    const counts = countQueuedByBin();
+    return json(res, 200, { ok: true, wake: false, reason: "providers_on_linode", counts });
   }
 
   if (path === "/api/ops/trim-history" && req.method === "POST") {

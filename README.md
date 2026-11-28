@@ -43,8 +43,7 @@ tickets/<uuid>/jobs/<id>.json
 
 ```bash
 npm run intake:serve    # commit worker :8787
-npm run wake:check
-npm run test:wake
+npm test
 node --test workers/lib/gitTipStore.test.mjs
 ```
 
